@@ -1,1 +1,339 @@
-# probable-octo-couscous
+# Автоматический конвейер YouTube Shorts (тайны и загадки)
+
+Раз в день GitHub Actions сам находит трендовую тему, пишет историю на русском, рисует картинки,
+озвучивает, накладывает субтитры и музыку, (по желанию) вставляет рекламный баннер и публикует
+вертикальное видео 1080×1920 ~60 с на YouTube. Используются **только бесплатные сервисы**.
+
+```
+trend-scout → story-writer → storyboard → narration-director → картинки → озвучка → субтитры → сборка → ad-inserter → publisher
+```
+
+| Шаг | Модуль | Сервис |
+|---|---|---|
+| Поиск темы | `src/trends.py` | YouTube Data API, Reddit JSON, Google Trends (pytrends), Gemini |
+| История 130–160 слов | `src/story.py` | Gemini API (бесплатный ключ) |
+| Раскадровка 8–12 сцен | `src/storyboard.py` | Gemini API |
+| Ударения, «ё», паузы, интонации → SSML | `src/narration.py` | RUAccent + Gemini |
+| Картинки | `src/images.py`, `src/style.py` | Pollinations.ai (без ключа) |
+| Озвучка + тайминги слов | `src/tts.py` | Azure AI Speech (F0), `ru-RU-DmitryNeural` |
+| Субтитры | `src/subtitles.py` | из таймингов Azure (WordBoundary) |
+| Сборка | `src/assemble.py` | MoviePy + FFmpeg, музыка из `music/` |
+| Реклама (выкл.) | `src/ads.py` | FFmpeg overlay |
+| Публикация | `src/upload.py` | YouTube Data API v3 (OAuth) |
+
+Описание каждого шага для Claude Code — в `.claude/skills/<имя>/SKILL.md`.
+
+## Структура
+
+```
+src/            код конвейера (main.py — точка входа)
+config/         publish.json — шаблоны публикации; voice.json — голос, ударения, паузы
+stress_dict.json словарь исключений ударений (дописывайте сюда)
+music/          ваши лоу-фай треки (mp3/wav/ogg/m4a)
+ads/            config.json (кампании), баннеры, log.json (показы)
+output/         результаты запусков (в git не попадают)
+used_topics.json, publish_log.json, trends_quota.json — состояние, коммитится ботом
+.github/workflows/daily.yml — расписание
+```
+
+---
+
+## 1. Быстрый локальный тест (без ключей)
+
+Нужны Python 3.11+ и FFmpeg.
+
+```bash
+pip install -r requirements.txt
+python -m src.main --no-upload
+```
+
+Без `GEMINI_API_KEY` конвейер работает в демо-режиме (готовая история про маяк Фланнан, режиссура
+по правилам). Без ключей Azure при `--no-upload` вместо голоса ставится **тихая заглушка** с оценочными
+таймингами — так можно проверить картинки, субтитры, музыку и монтаж. Для настоящей озвучки задайте
+`AZURE_SPEECH_KEY` и `AZURE_SPEECH_REGION`. Видео: `output/<дата_время>/final.mp4`,
+разметка озвучки: `output/<дата_время>/narration/`.
+
+При первом запуске RUAccent скачивает модели (~500 МБ) в `.cache/ruaccent`.
+
+Флаги:
+
+| Флаг | Что делает |
+|---|---|
+| `--no-upload` | всё, кроме загрузки на YouTube |
+| `--test-ad` | вставить тестовую рекламу (подразумевает `--no-upload`) |
+| `--ad-campaign ID` | принудительно взять конкретную кампанию |
+| `--topic "..."` | задать тему вручную, без trend-scout |
+| `--mark-used` | записать тему в `used_topics.json` даже при `--no-upload` |
+| `-v` | подробный лог |
+
+---
+
+## 2. Ключи и секреты — пошагово
+
+Все секреты добавляются в репозиторий: **GitHub → Settings → Secrets and variables → Actions → New repository secret**.
+
+| Секрет | Обязателен | Для чего |
+|---|---|---|
+| `GEMINI_API_KEY` | да | выбор темы, история, раскадровка, режиссура озвучки |
+| `AZURE_SPEECH_KEY` | да | озвучка Azure AI Speech |
+| `AZURE_SPEECH_REGION` | да | регион ресурса Speech, например `westeurope` |
+| `YT_CLIENT_ID` | да | OAuth-клиент Google |
+| `YT_CLIENT_SECRET` | да | OAuth-клиент Google |
+| `YT_REFRESH_TOKEN` | да | бессрочный доступ к каналу |
+| `YT_API_KEY` | нет | поиск трендов, если OAuth не задан |
+| `POLLINATIONS_TOKEN` | нет | бесплатный токен Pollinations — мягче лимиты |
+
+### 2.1. GEMINI_API_KEY (бесплатно)
+
+1. Откройте <https://aistudio.google.com/apikey> и войдите в Google-аккаунт.
+2. Нажмите **Create API key** → выберите или создайте проект → скопируйте ключ.
+3. Сохраните его как секрет `GEMINI_API_KEY`.
+
+Бесплатного тарифа хватает с запасом: конвейер делает 3–10 запросов в день.
+Модель по умолчанию — `gemini-2.5-flash` (если её нет, пробуются `gemini-flash-latest` и `gemini-2.0-flash`;
+свою можно задать переменной `GEMINI_MODEL`).
+
+### 2.2. AZURE_SPEECH_KEY и AZURE_SPEECH_REGION (бесплатный тариф F0)
+
+1. Зарегистрируйтесь на <https://azure.microsoft.com/free/> (нужна карта для подтверждения личности;
+   за тариф F0 деньги не списываются).
+2. Откройте <https://portal.azure.com> → **Create a resource** → найдите **Speech** (Azure AI services → Speech service) → **Create**.
+3. Заполните:
+   - **Resource group** — создайте новую, например `shorts`;
+   - **Region** — ближайший, например **West Europe** (`westeurope`); запомните его;
+   - **Name** — любое уникальное имя;
+   - **Pricing tier** — **Free F0**.
+4. **Review + create → Create**, дождитесь окончания развёртывания → **Go to resource**.
+5. Слева **Keys and Endpoint**: **KEY 1** → секрет `AZURE_SPEECH_KEY`, **Location/Region** (например `westeurope`) → секрет `AZURE_SPEECH_REGION`.
+
+Лимиты F0: 0,5 млн символов нейроголоса в месяц (ролик ≈ 1–3 тыс. символов вместе с разметкой →
+30 роликов укладываются с большим запасом), около 20 запросов в минуту. Бесплатный ресурс F0 можно
+создать только один на подписку.
+
+### 2.3. Проект Google Cloud и YouTube Data API v3
+
+1. Откройте <https://console.cloud.google.com/> → вверху выбор проекта → **New Project** → имя, например `shorts-bot` → **Create**.
+2. **APIs & Services → Library** → найдите **YouTube Data API v3** → **Enable**.
+3. **APIs & Services → OAuth consent screen** (или **Google Auth Platform**):
+   - User type: **External** → **Create**;
+   - App name, support email, developer email — любые ваши;
+   - **Scopes / Data access → Add or remove scopes**: добавьте
+     `https://www.googleapis.com/auth/youtube.upload` и `https://www.googleapis.com/auth/youtube.readonly`;
+   - **Test users / Audience**: добавьте Google-аккаунт, которому принадлежит канал.
+   - ⚠️ **Важно:** нажмите **Publish app** (статус **In production**). В статусе *Testing* refresh token
+     перестаёт работать через 7 дней. Проходить проверку Google для личного использования не обязательно —
+     при входе просто появится предупреждение «Google hasn't verified this app».
+4. **APIs & Services → Credentials → Create credentials → OAuth client ID**:
+   - Application type: **Desktop app** → **Create**;
+   - скопируйте **Client ID** → секрет `YT_CLIENT_ID`, **Client secret** → секрет `YT_CLIENT_SECRET`.
+5. *(необязательно)* **Create credentials → API key** → секрет `YT_API_KEY`.
+
+### 2.4. YT_REFRESH_TOKEN
+
+Делается один раз на своём компьютере (нужен браузер):
+
+```bash
+git clone <этот репозиторий> && cd <папка>
+pip install google-auth-oauthlib
+python -m src.get_refresh_token --client-id "ВАШ_CLIENT_ID" --client-secret "ВАШ_CLIENT_SECRET"
+```
+
+1. Откроется браузер — войдите в аккаунт **с тем каналом**, куда нужно публиковать (если каналов несколько — выберите нужный).
+2. Предупреждение «Google hasn't verified this app» → **Advanced / Дополнительно → Go to … (unsafe) / Перейти**.
+3. Разрешите доступ (загрузка видео и просмотр аккаунта YouTube).
+4. В консоли появится `YT_REFRESH_TOKEN` — сохраните его как секрет.
+
+Если порт 8080 занят — добавьте `--port 8090`.
+
+### 2.5. ⚠️ Аудит YouTube API (иначе видео будут «Доступ ограничен»)
+
+Google ограничивает **непроверенные** API-проекты (созданные после 28.07.2020): видео, загруженные через
+`videos.insert`, принудительно становятся **приватными**. Чтобы публиковать сразу `public`:
+
+1. Заполните форму **YouTube API Services — Audit and Quota Extension Form**
+   (<https://support.google.com/youtube/contact/yt_api_form>), выберите аудит соответствия (compliance audit).
+2. Опишите использование: «личный канал, автоматическая загрузка собственных роликов раз в день».
+3. Пока аудит не пройден, конвейер всё равно загрузит ролик (приватно) и напишет предупреждение в лог —
+   его можно открыть вручную в YouTube Studio.
+
+Квота: 10 000 единиц в сутки. Загрузка = 1600, поиск трендов = 100 × до 10 запросов, статистика — копейки. Укладываемся.
+
+### 2.6. POLLINATIONS_TOKEN (необязательно)
+
+Без токена Pollinations работает, но ограничивает анонимов (≈ 1 картинка в 45 с с одного IP, ~576×1024).
+Конвейер сам ждёт сколько нужно, поэтому шаг картинок может занять до ~10 минут.
+Бесплатный токен: зарегистрируйтесь на <https://enter.pollinations.ai> → скопируйте ключ → секрет `POLLINATIONS_TOKEN`.
+
+---
+
+## 3. Голос, ударения и интонации
+
+### Выбор голоса
+Запустите **Actions → Voice test (Azure) → Run workflow** (или локально `python -m src.voice_test`).
+В артефакте `voice-test-N` лежат mp3 каждого русского нейроголоса Azure и `index.html` с плеерами.
+Опции: своя фраза, многоязычные голоса, говорящие по-русски, все стили голоса.
+Понравившийся голос впишите в `config/voice.json` → `"voice"` и закоммитьте.
+
+### Ударения
+- RUAccent расставляет «ё» и определяет ударения с учётом контекста (омографы: за́мок/замо́к, му́ка/мука́).
+- В синтез ударение передаётся знаком U+0301 после ударной гласной. Это проверено на нейродвижке Microsoft:
+  «за́мок» и «замо́к» звучат по-разному, а слово остаётся целым для таймингов субтитров. Знак «+» не годится:
+  синтезатор читает его как отдельный символ.
+- По умолчанию ударения ставятся только омографам и словам из словаря, остальное Azure читает сам
+  (`config/voice.json → stress.mode`: `homographs` или `all`).
+- **Ошибка в ударении? Добавьте слово в `stress_dict.json`:**
+  ```json
+  { "Эйлеан": "+Эйлеан", "все": "всё", "атлас": "атл+ас" }
+  ```
+  Ключ — слово как в тексте, значение — «+» перед ударной гласной (или вариант с «ё»).
+- Проверить, как Azure читает ударения на вашем голосе: workflow **Voice test** с галочкой «Тест ударений»
+  (`python -m src.voice_test --stress-test`): три варианта каждой фразы — без разметки, вручную, через RUAccent.
+
+### Интонации и паузы (narration-director)
+Gemini размечает историю как режиссёр озвучки: паузы 300–600 мс после хука, перед поворотом и перед
+развязкой, 150–250 мс между смысловыми частями; чуть медленнее в напряжённых местах, чуть выше в вопросах;
+выделение ключевых слов загадки. Код собирает из этого SSML, проверяет его и при ошибке откатывается на
+простой текст с паузами. Разметка каждого ролика — в артефакте: `narration/scene_XX.ssml` и `narration/full.ssml.txt`.
+Диапазоны пауз, темпа и высоты — в `config/voice.json`.
+
+## 4. Музыка
+
+1. Откройте <https://pixabay.com/music/> → поиск `lofi` / `lo-fi chill` / `ambient`.
+2. Скачайте 5–15 спокойных треков (MP3) и положите в папку `music/`, закоммитьте.
+3. *(необязательно)* рядом с треком положите `<имя_трека>.txt` с атрибуцией — она попадёт в описание.
+
+Каждый раз выбирается случайный трек, громкость ~12% (`MUSIC_VOLUME`), плавное затухание в конце.
+Pixabay Content License разрешает бесплатное использование без указания авторства; на всякий случай
+избегайте треков с пометкой о регистрации в Content ID. Если папка пуста — конвейер **синтезирует**
+спокойный лоу-фай трек сам (`src/music_gen.py`), он гарантированно без авторских прав.
+
+---
+
+## 5. Расписание GitHub Actions
+
+Файл `.github/workflows/daily.yml`:
+
+- **автоматически** каждый день в 07:23 UTC (10:23 МСК) — полный прогон с публикацией;
+- **вручную**: вкладка **Actions → Daily YouTube Short → Run workflow**. По умолчанию галочка
+  «Не загружать на YouTube» включена — это безопасный тестовый прогон. Можно включить тестовую рекламу и задать тему.
+
+Что получаете:
+
+- артефакт `short-N`: `final.mp4`, картинки сцен, `story.json`, `storyboard.json`, `metadata.json`, `subtitles.srt`, `summary.json`;
+- артефакт `trends-report-N`: `trends_report.json` (тема, источник, метрики, причина выбора, топ-15 кандидатов);
+- после публикации бот коммитит `used_topics.json`, `publish_log.json`, `ads/log.json` (темы не повторяются,
+  а коммиты не дают GitHub отключить расписание за неактивность).
+
+Если пуш бота падает с 403: **Settings → Actions → General → Workflow permissions → Read and write permissions**.
+
+Время запуска меняется строкой `cron` (время в UTC).
+
+---
+
+## 6. Реклама (по умолчанию выключена)
+
+Конфиг — `ads/config.json`:
+
+```json
+{
+  "enabled": false,
+  "opacity": 0.9,
+  "fade": 0.5,
+  "max_banner_width": 720,
+  "max_banner_height": 300,
+  "label": "Реклама",
+  "campaigns": [
+    {
+      "id": "romashka-20261110",
+      "enabled": true,
+      "advertiser": "Ромашка",
+      "legal": "ООО «Ромашка», ИНН 0000000000",
+      "erid": "2Vtzqxxxxxx",
+      "banner": "ads/romashka-20261110.png",
+      "url": "https://example.com/?utm_source=shorts",
+      "start_date": "2026-11-10",
+      "end_date": "2026-12-10",
+      "position": "auto",
+      "show_at": 20,
+      "duration": 5
+    }
+  ]
+}
+```
+
+| Поле | Значение |
+|---|---|
+| `position` | `auto` (ищет самую «пустую» область в верхней половине), `top-left`, `top-center`, `top-right`, `upper-middle` или `{"x": 100, "y": 300}` |
+| `show_at` | секунда появления (не раньше 3.5 с — хук не трогаем; пусто = 40% ролика) |
+| `duration` | 4–6 секунд |
+| `legal`, `erid` | данные для маркировки рекламы (ФЗ «О рекламе»: «Реклама», рекламодатель, токен ОРД) |
+
+### Как включить рекламу
+
+1. Добавьте кампанию (баннер копируется в `ads/`):
+   ```bash
+   python -m src.ads add --banner ~/Downloads/banner.png --advertiser "Ромашка" \
+       --url "https://example.com" --start 2026-11-10 --end 2026-12-10 \
+       --legal "ООО «Ромашка», ИНН 0000000000" --erid "2Vtzq..."
+   ```
+2. Проверьте на последнем готовом видео:
+   ```bash
+   python -m src.ads test --campaign romashka-20261110
+   ```
+   Посмотрите `output/ad_test_*/ad_preview.jpg` и `video_ad.mp4`.
+3. Включите: `python -m src.ads enable` (или `"enabled": true` в конфиге), закоммитьте `ads/`.
+
+Можно просто прислать баннер Claude Code в чат — он сделает шаги 1–2 сам (скилл `ad-inserter`).
+
+### Что гарантирует модуль
+
+- Баннер только в безопасной зоне Shorts: верх кадра под шапкой (y 210–900), не перекрывает субтитры,
+  правую колонку кнопок и нижнюю подпись; даже ручные координаты зажимаются в эту зону.
+- Непрозрачность 90%, плавное появление и исчезновение, показ 4–6 с, не в первые 3 секунды.
+- Плашка «Реклама» на баннере, в описании первой строкой «Реклама. Рекламодатель: … erid: …» и ссылка.
+- В YouTube ставится отметка о платной рекламе (`paidProductPlacementDetails.hasPaidProductPlacement`).
+  Если API её не принял — в логе будет предупреждение, поставьте галочку в YouTube Studio вручную.
+- Кампании с истёкшей датой пропускаются; при нескольких активных — ротация (меньше показов → раньше).
+- Каждый опубликованный показ пишется в `ads/log.json`. Отчёт рекламодателю: `python -m src.ads report --campaign ID`.
+- Прочие команды: `python -m src.ads list`, `python -m src.ads disable`.
+
+---
+
+## 7. Настройки через переменные окружения
+
+| Переменная | По умолчанию | Описание |
+|---|---|---|
+| `GEMINI_MODEL` | `gemini-2.5-flash` | модель Gemini |
+| `TTS_VOICE` | из `config/voice.json` | временно переопределить голос Azure |
+| `RUACCENT_DIR` | `.cache/ruaccent` | папка моделей RUAccent |
+| `IMAGE_SEED` | `424242` | seed картинок (единый стиль) |
+| `POLLINATIONS_MODEL` | `flux` | модель картинок |
+| `MUSIC_VOLUME` | `0.12` | громкость музыки |
+| `MAX_YT_QUERIES` | `10` | лимит поисковых запросов YouTube в сутки |
+| `X264_PRESET` | `medium` | скорость/качество кодирования |
+
+Шаблоны названия и описания — `config/publish.json`. Голос, запасные голоса, базовый темп/высота,
+режим ударений, диапазоны пауз — `config/voice.json`.
+
+## 8. Если что-то пошло не так
+
+- **Тема повторяется** — проверьте, что бот коммитит `used_topics.json` (права на запись, см. п. 5).
+- **Azure: AuthenticationFailure (401)** — неверный ключ или регион (регион — код вида `westeurope`, не название).
+- **Azure отверг SSML** — конвейер сам повторит с простой разметкой (текст + паузы); подробности в логе.
+- **Неправильное ударение** — добавьте слово в `stress_dict.json` (п. 3).
+- **Видео загрузилось приватным** — проект API не прошёл аудит (п. 2.5).
+- **invalid_grant** при загрузке — refresh token отозван или истёк (приложение в статусе Testing, п. 2.3) — получите новый.
+- **Reddit / Google Trends недоступны** — источник пропускается, тема выбирается из оставшихся.
+- Подробности каждого запуска — `output/<run>/summary.json` (время шагов, ошибка с трассировкой).
+
+## 9. Лицензии сервисов (коммерческое использование)
+
+| Компонент | Условия |
+|---|---|
+| Azure AI Speech F0 | бесплатный тариф Azure, коммерческое использование разрешено условиями Microsoft Product Terms |
+| Gemini API (бесплатный тариф) | коммерческое использование разрешено; на бесплатном тарифе Google может использовать запросы для улучшения моделей — не отправляйте туда персональные данные |
+| RUAccent | код и модели `ruaccent/accentuator` — лицензия MIT |
+| Pollinations.ai | бесплатный генератор; перед монетизацией сверьтесь с актуальными условиями на pollinations.ai |
+| Pixabay Music | Pixabay Content License: бесплатно, в том числе коммерчески, без указания авторства |
+| Процедурная музыка (`music_gen.py`) | генерируется кодом, прав третьих лиц нет |
+| Шрифты DejaVu / Montserrat | свободные лицензии (Bitstream Vera / OFL) |

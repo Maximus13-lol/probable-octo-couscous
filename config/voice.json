@@ -1,0 +1,27 @@
+{
+  "voice": "ru-RU-DmitryNeural",
+  "fallback_voices": ["ru-RU-SvetlanaNeural", "ru-RU-DariyaNeural"],
+  "style": "narration-professional",
+  "style_degree": 1.0,
+  "base_rate": "+4%",
+  "base_pitch": "+0%",
+  "stress": {
+    "method": "acute",
+    "mode": "homographs",
+    "_comment": "method: acute (U+0301 после ударной гласной — проверено на нейродвижке Microsoft) | none. mode: homographs (только омографы + stress_dict.json) | all (все многосложные слова)"
+  },
+  "emphasis": "prosody",
+  "_emphasis_comment": "prosody — выделение ключевых слов темпом/высотой/громкостью (работает с любым голосом); emphasis — тег <emphasis> (Azure поддерживает его не для всех голосов)",
+  "pauses_ms": {
+    "after_hook": [300, 600],
+    "before_twist": [300, 600],
+    "before_resolution": [300, 600],
+    "between_parts": [150, 250]
+  },
+  "limits": {
+    "rate_min": -15,
+    "rate_max": 10,
+    "pitch_min": -8,
+    "pitch_max": 10
+  }
+}

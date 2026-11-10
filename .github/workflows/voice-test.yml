@@ -1,0 +1,55 @@
+name: Voice test (Azure)
+
+on:
+  workflow_dispatch:
+    inputs:
+      text:
+        description: "Фраза для озвучки (пусто = тестовая)"
+        type: string
+        required: false
+      multilingual:
+        description: "Добавить многоязычные голоса, говорящие по-русски"
+        type: boolean
+        default: false
+      styles:
+        description: "Озвучить каждый стиль голоса"
+        type: boolean
+        default: false
+      stress_test:
+        description: "Тест ударений (без разметки / вручную / RUAccent)"
+        type: boolean
+        default: false
+
+jobs:
+  voices:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+          sudo apt-get install -y -qq libasound2t64 || sudo apt-get install -y -qq libasound2
+          pip install -r requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: .cache/ruaccent
+          key: ruaccent-1.5.8.3-turbo3.1
+      - name: Озвучка
+        env:
+          AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+          AZURE_SPEECH_REGION: ${{ secrets.AZURE_SPEECH_REGION }}
+          TEXT: ${{ inputs.text }}
+        run: |
+          ARGS=""
+          [ "${{ inputs.multilingual }}" = "true" ] && ARGS="$ARGS --multilingual"
+          [ "${{ inputs.styles }}" = "true" ] && ARGS="$ARGS --styles"
+          [ "${{ inputs.stress_test }}" = "true" ] && ARGS="$ARGS --stress-test"
+          if [ -n "$TEXT" ]; then python -m src.voice_test $ARGS --text "$TEXT"; else python -m src.voice_test $ARGS; fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: voice-test-${{ github.run_number }}
+          path: output/voice_test/
