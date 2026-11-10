@@ -557,12 +557,49 @@ def vosk_clean(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-def vosk_segments(text: str, words: list[WordInfo], segs: list[Segment]) -> list[dict]:
+# Где резать фрагмент и какую паузу ставить (Vosk сам на этих знаках паузу почти не делает)
+_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|(?<=\.\.\.)\s+|(?<=[:;])\s+|\s+(?=—\s)")
+
+
+def vosk_pauses(cfg: dict | None = None) -> dict:
+    v = (cfg or voice_config()).get("vosk", {})
+    return {"sentence": int(v.get("min_pause_sentence_ms", 400)),
+            "clause": int(v.get("min_pause_clause_ms", 250)),
+            "comma": int(v.get("min_pause_comma_ms", 0)),
+            "scene": int(v.get("min_pause_scene_ms", 450))}
+
+
+def _piece_pause(piece: str, mp: dict) -> int:
+    p = piece.rstrip()
+    if re.search(r"(\.\.\.|[.!?])$", p):
+        return mp["sentence"]
+    if re.search(r"[:;]$", p):
+        return mp["clause"]
+    return 0
+
+
+def vosk_segments(text: str, words: list[WordInfo], segs: list[Segment], cfg: dict | None = None) -> list[dict]:
+    """Фрагменты для Vosk: каждый фрагмент режиссуры дополнительно режется на предложения и части фразы
+    (после . ! ? ... : ; и перед тире) с гарантированной паузой — чтобы фразы не слипались."""
+    mp = vosk_pauses(cfg)
     out = []
     for seg in segs:
         t = vosk_clean(render(text, words, seg.start, seg.end, "speak"))
-        if t:
-            out.append({"text": t, "rate": seg.rate, "pause_after_ms": seg.pause_after_ms})
+        if not t:
+            continue
+        pieces = [x.strip() for x in _SPLIT_RE.split(t) if x and x.strip()]
+        if mp["comma"]:
+            pieces = [y.strip() for x in pieces for y in re.split(r"(?<=,)\s+", x) if y.strip()]
+        for k, piece in enumerate(pieces):
+            last = k == len(pieces) - 1
+            pause = _piece_pause(piece, mp)
+            if not last and pieces[k + 1].startswith("—"):
+                pause = max(pause, mp["clause"])  # пауза перед тире
+            if piece.endswith(",") and mp["comma"]:
+                pause = mp["comma"]
+            if last:  # пауза режиссёра после фрагмента, но не короче минимальной для этого знака
+                pause = max(seg.pause_after_ms, pause) if seg.pause_after_ms else 0
+            out.append({"text": piece, "rate": seg.rate, "pause_after_ms": pause})
     return out
 
 
@@ -646,7 +683,8 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
             "index": sc["index"], "role": plan.get("role"), "text": text, "display_text": display,
             "ssml": ssml, "plain_ssml": fallback, "ssml_fallback": bool(problem),
             "tts_text": tts_text, "tts_style": tts_style, "vosk_segments": vsegs,
-            "pause_after_ms": _clamp(plan.get("pause_after_ms", 0), 0, 900) if sc is not scenes[-1] else 0,
+            "pause_after_ms": max(_clamp(plan.get("pause_after_ms", 0), 0, 900), vosk_pauses(cfg)["scene"])
+                              if sc is not scenes[-1] else 0,
             "stressed_words": stressed,
             "yo_words": [w.display for w in words if w.source == "yo"],
         })

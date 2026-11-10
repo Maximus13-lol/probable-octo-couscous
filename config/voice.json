@@ -5,7 +5,12 @@
     "model": "vosk-model-tts-ru-0.9-multi",
     "speaker": 3,
     "_speaker_comment": "0–4: голоса Vosk (3 женских, 2 мужских). Выбран 3.",
-    "speech_rate": 1.1
+    "speech_rate": 1.1,
+    "min_pause_sentence_ms": 400,
+    "min_pause_clause_ms": 250,
+    "min_pause_comma_ms": 0,
+    "min_pause_scene_ms": 450,
+    "_pauses_comment": "Минимальные паузы, мс: после предложения (. ! ? ...), после : ; и перед тире, после запятой (0 — запятые читает сам Vosk), между сценами. Если фразы слипаются — увеличьте."
   },
   "gemini": {
     "voice": "Charon",
