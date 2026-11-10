@@ -1,0 +1,106 @@
+name: Daily YouTube Short
+
+on:
+  schedule:
+    # 07:23 UTC = 10:23 МСК. Минута не «круглая», чтобы не попадать в пик очереди GitHub.
+    - cron: "23 7 * * *"
+  workflow_dispatch:
+    inputs:
+      no_upload:
+        description: "Не загружать на YouTube (тестовый прогон)"
+        type: boolean
+        default: true
+      test_ad:
+        description: "Вставить тестовую рекламу (без загрузки)"
+        type: boolean
+        default: false
+      topic:
+        description: "Тема вручную (пусто = trend-scout)"
+        type: string
+        required: false
+
+permissions:
+  contents: write   # чтобы сохранить used_topics.json, publish_log.json, ads/log.json
+
+concurrency:
+  group: daily-short
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      PYTHONUNBUFFERED: "1"
+      PUBLISH: ${{ github.event_name == 'schedule' || (inputs.no_upload == false && inputs.test_ad == false) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Системные пакеты (FFmpeg, шрифты)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          sudo apt-get install -y -qq fonts-montserrat || echo "Montserrat недоступен — будет DejaVu Sans Bold"
+
+      - name: Python-зависимости
+        run: pip install -r requirements.txt
+
+      - name: Конвейер
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
+          TOPIC: ${{ inputs.topic }}
+        run: |
+          ARGS=""
+          if [ "$PUBLISH" != "true" ]; then ARGS="$ARGS --no-upload"; fi
+          if [ "${{ inputs.test_ad }}" = "true" ]; then ARGS="$ARGS --test-ad"; fi
+          if [ -n "$TOPIC" ]; then
+            python -m src.main $ARGS --topic "$TOPIC"
+          else
+            python -m src.main $ARGS
+          fi
+
+      - name: Артефакт — готовое видео и файлы запуска
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: short-${{ github.run_number }}
+          path: |
+            output/*/final.mp4
+            output/*/*.json
+            output/*/subtitles.srt
+            output/*/ad_preview.jpg
+            output/*/images/*.jpg
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Артефакт — trends_report.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trends-report-${{ github.run_number }}
+          path: output/*/trends_report.json
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Сохранить состояние (темы, логи публикаций и показов рекламы)
+        if: success() && env.PUBLISH == 'true'
+        run: |
+          git config user.name "shorts-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add used_topics.json publish_log.json ads/log.json trends_quota.json 2>/dev/null || true
+          if git diff --cached --quiet; then echo "Нет изменений"; exit 0; fi
+          git commit -m "chore: состояние после публикации $(date -u +%F) [skip ci]"
+          for i in 1 2 3; do
+            git pull --rebase -q && git push && break
+            sleep $((i * 5))
+          done

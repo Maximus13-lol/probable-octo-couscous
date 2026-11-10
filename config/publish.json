@@ -1,0 +1,12 @@
+{
+  "title_template": "{title} #Shorts",
+  "description_template": "{hook}\n\n{description}\n\n{ad_block}\n\n{hashtags}\n\nИстория основана на открытых источниках и общепринятых версиях. Изображения и озвучка созданы с помощью ИИ.\nМузыка: {music_credit}",
+  "base_hashtags": ["#Shorts", "#тайны", "#загадки", "#необъяснимое"],
+  "tags": ["тайны", "загадки", "необъяснимые случаи", "мистика", "интересные факты", "shorts"],
+  "category_id": "24",
+  "privacy_status": "public",
+  "language": "ru",
+  "made_for_kids": false,
+  "contains_synthetic_media": true,
+  "music_credit_default": "лоу-фай трек без авторских прав (Pixabay Music / собственная генерация)"
+}

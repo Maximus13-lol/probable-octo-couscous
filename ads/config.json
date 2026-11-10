@@ -1,0 +1,9 @@
+{
+  "enabled": false,
+  "opacity": 0.9,
+  "fade": 0.5,
+  "max_banner_width": 720,
+  "max_banner_height": 300,
+  "label": "Реклама",
+  "campaigns": []
+}

@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.venv/
+output/*
+!output/.gitkeep
+*.tmp
+.env
+client_secret*.json
