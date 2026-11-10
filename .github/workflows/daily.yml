@@ -52,15 +52,19 @@ jobs:
       - name: Python-зависимости
         run: pip install -r requirements.txt
 
-      - name: Кэш моделей RUAccent (~500 МБ, скачиваются с Hugging Face один раз)
+      - name: Кэш моделей RUAccent, faster-whisper и Vosk (скачиваются один раз)
         uses: actions/cache@v4
         with:
-          path: .cache/ruaccent
-          key: ruaccent-1.5.8.3-turbo3.1
+          path: |
+            .cache/ruaccent
+            .cache/whisper
+            ~/.cache/vosk
+          key: models-ruaccent-1.5.8.3-whisper-small-vosk-0.9-v2
 
       - name: Конвейер
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # необязательно: если заданы, озвучка пойдёт через Azure, а Gemini TTS станет запасным
           AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
           AZURE_SPEECH_REGION: ${{ secrets.AZURE_SPEECH_REGION }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}

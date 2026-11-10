@@ -1,18 +1,19 @@
-name: Voice test (Azure)
+name: Voice test
 
 on:
   workflow_dispatch:
     inputs:
+      provider:
+        description: "Сервис озвучки"
+        type: choice
+        options: [vosk, gemini, azure]
+        default: vosk
       text:
         description: "Фраза для озвучки (пусто = тестовая)"
         type: string
         required: false
-      multilingual:
-        description: "Добавить многоязычные голоса, говорящие по-русски"
-        type: boolean
-        default: false
-      styles:
-        description: "Озвучить каждый стиль голоса"
+      all_voices:
+        description: "Только для gemini: все 30 голосов (иначе подборка из 8; тратит бесплатный лимит)"
         type: boolean
         default: false
       stress_test:
@@ -23,7 +24,7 @@ on:
 jobs:
   voices:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -36,20 +37,24 @@ jobs:
           pip install -r requirements.txt
       - uses: actions/cache@v4
         with:
-          path: .cache/ruaccent
-          key: ruaccent-1.5.8.3-turbo3.1
+          path: |
+            .cache/ruaccent
+            .cache/whisper
+            ~/.cache/vosk
+          key: models-ruaccent-1.5.8.3-whisper-small-vosk-0.9-v2
       - name: Озвучка
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
           AZURE_SPEECH_REGION: ${{ secrets.AZURE_SPEECH_REGION }}
           TEXT: ${{ inputs.text }}
         run: |
-          ARGS=""
-          [ "${{ inputs.multilingual }}" = "true" ] && ARGS="$ARGS --multilingual"
-          [ "${{ inputs.styles }}" = "true" ] && ARGS="$ARGS --styles"
+          ARGS="--provider ${{ inputs.provider }}"
+          [ "${{ inputs.all_voices }}" = "true" ] && ARGS="$ARGS --all"
           [ "${{ inputs.stress_test }}" = "true" ] && ARGS="$ARGS --stress-test"
           if [ -n "$TEXT" ]; then python -m src.voice_test $ARGS --text "$TEXT"; else python -m src.voice_test $ARGS; fi
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: voice-test-${{ github.run_number }}
           path: output/voice_test/
