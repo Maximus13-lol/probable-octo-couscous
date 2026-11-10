@@ -1,53 +1,122 @@
-"""Озвучка edge-tts (ru-RU-DmitryNeural) с таймингами слов (WordBoundary). По сцене — отдельный файл."""
+"""Озвучка Azure AI Speech (тариф F0) по SSML от narration-director, с таймингами слов (WordBoundary).
+
+Секреты: AZURE_SPEECH_KEY, AZURE_SPEECH_REGION. Голос — config/voice.json.
+Каждая сцена озвучивается отдельно: audio/scene_XX.mp3 + тайминги слов в tts.json.
+"""
 from __future__ import annotations
 
-import asyncio
 import os
 import subprocess
+import time
+import urllib.parse
 from pathlib import Path
 
-import edge_tts
+import requests
 
-from .utils import env, log, save_json
+from .narration import ACUTE, voice_config
+from .utils import env, log, retry, save_json
 
-VOICE = env("TTS_VOICE", "ru-RU-DmitryNeural")
-FALLBACK_VOICES = [v for v in env("TTS_FALLBACK_VOICES", "ru-RU-SvetlanaNeural").split(",") if v]
-RATE = env("TTS_RATE", "+12%")  # 130–160 слов ≈ 55–65 с
-PITCH = env("TTS_PITCH", "-2Hz")
-TICKS = 10_000_000  # edge-tts отдаёт время в 100-нс тиках
+TICKS = 10_000_000  # Azure отдаёт смещения в 100-нс тиках
+RETRIABLE = {"ConnectionFailure", "ServiceTimeout", "ServiceError", "TooManyRequests", "ServiceUnavailable"}
+FATAL = {"AuthenticationFailure", "Forbidden"}
 
 
-def _patch_ssl() -> None:
-    """edge-tts использует только certifi; если окружение задаёт свой CA (корп. прокси) — добавляем его."""
-    ca = os.environ.get("SSL_CERT_FILE") or os.environ.get("REQUESTS_CA_BUNDLE")
-    if not ca or not Path(ca).exists():
-        return
+class SsmlRejected(Exception):
+    pass
+
+
+class TtsFatal(RuntimeError):
+    pass
+
+
+def azure_available() -> bool:
+    return bool(env("AZURE_SPEECH_KEY") and env("AZURE_SPEECH_REGION"))
+
+
+@retry(tries=3, base_delay=3, exceptions=(requests.RequestException,), label="azure.voices")
+def list_voices() -> list[dict]:
+    region, key = env("AZURE_SPEECH_REGION"), env("AZURE_SPEECH_KEY")
+    r = requests.get(f"https://{region}.tts.speech.microsoft.com/cognitiveservices/voices/list",
+                     headers={"Ocp-Apim-Subscription-Key": key}, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
+def voice_styles(voice: str) -> list[str]:
     try:
-        from edge_tts import communicate
-        communicate._SSL_CTX.load_verify_locations(ca)  # noqa: SLF001
+        for v in list_voices():
+            if v.get("ShortName") == voice:
+                return v.get("StyleList") or []
     except Exception as exc:  # noqa: BLE001
-        log.debug("Не удалось добавить CA в edge-tts: %s", exc)
+        log.warning("Не удалось получить список голосов Azure: %s", exc)
+    return []
 
 
-_patch_ssl()
+def _speech_config():
+    import azure.cognitiveservices.speech as sdk
+    cfg = sdk.SpeechConfig(subscription=env("AZURE_SPEECH_KEY"), region=env("AZURE_SPEECH_REGION"))
+    cfg.set_speech_synthesis_output_format(sdk.SpeechSynthesisOutputFormat.Audio24Khz96KBitRateMonoMp3)
+    cfg.set_property(sdk.PropertyId.SpeechServiceResponse_RequestSentenceBoundary, "false")
+    cfg.set_property(sdk.PropertyId.SpeechServiceResponse_RequestPunctuationBoundary, "false")
+    proxy = os.environ.get("HTTPS_PROXY") or os.environ.get("https_proxy")
+    if proxy:  # SDK сам не читает переменные прокси
+        u = urllib.parse.urlparse(proxy)
+        if u.hostname and u.port:
+            cfg.set_proxy(u.hostname, u.port)
+    return cfg
 
 
-async def _synth(text: str, voice: str, out: Path) -> list[dict]:
-    comm = edge_tts.Communicate(text, voice, rate=RATE, pitch=PITCH, boundary="WordBoundary")
+def _synth_once(ssml: str, out: Path) -> list[dict]:
+    import azure.cognitiveservices.speech as sdk
+    synth = sdk.SpeechSynthesizer(speech_config=_speech_config(), audio_config=None)
     words: list[dict] = []
-    with open(out, "wb") as f:
-        async for chunk in comm.stream():
-            if chunk["type"] == "audio":
-                f.write(chunk["data"])
-            elif chunk["type"] == "WordBoundary":
-                words.append({
-                    "word": chunk["text"],
-                    "start": chunk["offset"] / TICKS,
-                    "end": (chunk["offset"] + chunk["duration"]) / TICKS,
-                })
-    if out.stat().st_size < 1000 or not words:
-        raise RuntimeError("edge-tts вернул пустое аудио")
-    return words
+
+    def on_word(evt):
+        if evt.boundary_type == sdk.SpeechSynthesisBoundaryType.Word:
+            start = evt.audio_offset / TICKS
+            words.append({"word": evt.text.replace(ACUTE, ""), "start": start,
+                          "end": start + evt.duration.total_seconds()})
+
+    synth.synthesis_word_boundary.connect(on_word)
+    res = synth.speak_ssml_async(ssml).get()
+    if res.reason == sdk.ResultReason.SynthesizingAudioCompleted:
+        if not res.audio_data or not words:
+            raise RuntimeError("Azure вернул пустое аудио")
+        out.write_bytes(res.audio_data)
+        return words
+    det = res.cancellation_details
+    code = str(det.error_code).split(".")[-1]
+    msg = f"{code}: {det.error_details}"
+    if code in FATAL:
+        raise TtsFatal(f"Azure: доступ запрещён ({msg}) — проверьте AZURE_SPEECH_KEY / AZURE_SPEECH_REGION")
+    if code == "BadRequest" or "SSML" in (det.error_details or ""):
+        raise SsmlRejected(msg)
+    if code in RETRIABLE or code == "RuntimeError":
+        raise ConnectionError(msg)
+    raise RuntimeError(msg)
+
+
+def synth_scene(ssml: str, plain_ssml: str, out: Path) -> tuple[list[dict], bool]:
+    """Возвращает (слова, использован ли запасной SSML)."""
+    used_plain = False
+    current = ssml
+    for attempt in range(1, 6):
+        try:
+            return _synth_once(current, out), used_plain
+        except SsmlRejected as exc:
+            if used_plain:
+                raise RuntimeError(f"Azure отверг даже простой SSML: {exc}") from exc
+            log.warning("Azure отверг SSML (%s) — повтор с простой разметкой (текст + паузы)", exc)
+            current, used_plain = plain_ssml, True
+        except TtsFatal:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if attempt == 5:
+                raise
+            delay = min(30, 2 ** attempt)
+            log.warning("Azure TTS, попытка %d: %s — повтор через %d с", attempt, exc, delay)
+            time.sleep(delay)
+    raise RuntimeError("Azure TTS: попытки исчерпаны")
 
 
 def audio_duration(path: Path) -> float:
@@ -58,38 +127,67 @@ def audio_duration(path: Path) -> float:
     return float(out.stdout.strip())
 
 
-def synth_scene(text: str, out: Path) -> tuple[list[dict], str]:
-    """Озвучивает текст; повторы с паузами, затем запасные голоса. Возвращает (слова, голос)."""
-    last: Exception | None = None
-    for voice in [VOICE] + [v for v in FALLBACK_VOICES if v != VOICE]:
-        for attempt in range(1, 5):
-            try:
-                return asyncio.run(_synth(text, voice, out)), voice
-            except Exception as exc:  # noqa: BLE001
-                last = exc
-                log.warning("edge-tts %s, попытка %d: %s", voice, attempt, exc)
-                asyncio.run(asyncio.sleep(2 * attempt))
-        log.warning("Голос %s недоступен — пробую запасной", voice)
-    raise RuntimeError(f"Озвучка не удалась: {last}")
+def _with_voice(ssml: str, old: str, new: str) -> str:
+    return ssml.replace(f'<voice name="{old}">', f'<voice name="{new}">')
 
 
-def synthesize(board: dict, run_dir: Path) -> list[dict]:
-    """Для каждой сцены: mp3, длительность и тайминги слов. Голос фиксируется по первой сцене."""
-    global VOICE  # noqa: PLW0603 — если основной голос недоступен, весь ролик одним голосом
+# ------------------------------------------------------------------ заглушка без ключа
+def _silent_preview(narr: list[dict], adir: Path) -> list[dict]:
+    """Только для локальной проверки монтажа без ключа Azure: тишина + оценочные тайминги слов."""
+    import re
+    out = []
+    for sc in narr:
+        words = re.findall(r"[А-Яа-яЁёA-Za-z0-9]+", sc["display_text"])
+        t, wl = 0.05, []
+        for w in words:
+            d = 0.12 + 0.055 * len(w)
+            wl.append({"word": w, "start": t, "end": t + d})
+            t += d + 0.06
+        dur = t + 0.1
+        path = adir / f"scene_{sc['index']:02d}.mp3"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi", "-i", "anullsrc=r=24000:cl=mono",
+                        "-t", f"{dur:.3f}", "-b:a", "64k", str(path)], check=True)
+        out.append({"index": sc["index"], "path": str(path), "duration": audio_duration(path), "words": wl,
+                    "voice": "SILENT-PREVIEW", "plain_ssml_used": False,
+                    "pause_after": sc.get("pause_after_ms", 200) / 1000})
+    return out
+
+
+# ------------------------------------------------------------------ шаг конвейера
+def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False) -> list[dict]:
     adir = run_dir / "audio"
     adir.mkdir(parents=True, exist_ok=True)
-    result = []
-    for scene in board["scenes"]:
-        i = scene["index"]
-        path = adir / f"scene_{i:02d}.mp3"
-        words, voice = synth_scene(scene["text"], path)
-        if voice != VOICE:
-            log.warning("Дальше весь ролик озвучивается голосом %s", voice)
-            VOICE = voice
-            if i > 0:  # переозвучить предыдущие сцены тем же голосом
-                return synthesize(board, run_dir)
-        dur = audio_duration(path)
-        result.append({"index": i, "path": str(path), "duration": dur, "words": words, "voice": voice})
-        log.info("Озвучка сцены %d: %.2f с, %d слов", i, dur, len(words))
-    save_json(run_dir / "tts.json", result)
-    return result
+    if not azure_available():
+        if not allow_silent:
+            raise TtsFatal("Не заданы AZURE_SPEECH_KEY / AZURE_SPEECH_REGION")
+        log.warning("⚠ Нет ключа Azure — ТИХАЯ ЗАГЛУШКА с оценочными таймингами (только для проверки монтажа!)")
+        result = _silent_preview(narr, adir)
+        save_json(run_dir / "tts.json", result)
+        return result
+
+    cfg = voice_config()
+    voices = [cfg["voice"]] + [v for v in cfg.get("fallback_voices", []) if v != cfg["voice"]]
+    last: Exception | None = None
+    for voice in voices:
+        try:
+            result = []
+            for sc in narr:
+                path = adir / f"scene_{sc['index']:02d}.mp3"
+                ssml = _with_voice(sc["ssml"], cfg["voice"], voice)
+                plain = _with_voice(sc["plain_ssml"], cfg["voice"], voice)
+                words, used_plain = synth_scene(ssml, plain, path)
+                dur = audio_duration(path)
+                result.append({"index": sc["index"], "path": str(path), "duration": dur, "words": words,
+                               "voice": voice, "plain_ssml_used": used_plain,
+                               "pause_after": sc.get("pause_after_ms", 200) / 1000})
+                log.info("Озвучка сцены %d: %.2f с, %d слов%s", sc["index"], dur, len(words),
+                         " (простой SSML)" if used_plain else "")
+                time.sleep(0.5)  # F0: не больше 20 запросов в минуту
+            save_json(run_dir / "tts.json", result)
+            return result
+        except TtsFatal:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            log.warning("Голос %s не сработал (%s) — пробую запасной", voice, exc)
+    raise RuntimeError(f"Озвучка не удалась ни одним голосом: {last}")

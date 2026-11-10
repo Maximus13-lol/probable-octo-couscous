@@ -1,5 +1,6 @@
 """Конвейер YouTube Shorts:
-trend-scout → story-writer → storyboard → картинки → озвучка → субтитры+сборка → ad-inserter → publisher.
+trend-scout → story-writer → storyboard → narration-director → картинки → озвучка (Azure) →
+субтитры+сборка → ad-inserter → publisher.
 
     python -m src.main                 # полный прогон с публикацией
     python -m src.main --no-upload     # всё, кроме загрузки
@@ -15,12 +16,12 @@ import sys
 import time
 import traceback
 
-from . import ads, assemble, images, story, storyboard, trends, tts, upload
+from . import ads, assemble, images, narration, story, storyboard, trends, tts, upload
 from .utils import OUTPUT_DIR, load_json, log, save_json, setup_logging
 
 
 def step(n: int, name: str) -> float:
-    log.info("━━━━━━━━ [%d/8] %s ━━━━━━━━", n, name)
+    log.info("━━━━━━━━ [%d/9] %s ━━━━━━━━", n, name)
     return time.time()
 
 
@@ -50,29 +51,36 @@ def run(args) -> int:
         board = storyboard.make_storyboard(st, choice.get("topic_en", choice["topic"]), run_dir)
         done("storyboard", t)
 
-        t = step(4, "картинки (Pollinations)")
+        t = step(4, "narration-director (ударения, паузы, SSML)")
+        voice_cfg = narration.voice_config()
+        styles = tts.voice_styles(voice_cfg["voice"]) if tts.azure_available() else []
+        narr = narration.direct(board, run_dir, voice_cfg["voice"], styles)
+        done("narration", t)
+
+        t = step(5, "картинки (Pollinations)")
         imgs = images.generate_images(board, run_dir)
         save_json(run_dir / "storyboard.json", board)  # + полные промпты
         done("images", t)
 
-        t = step(5, "озвучка (edge-tts)")
-        voice = tts.synthesize(board, run_dir)
+        t = step(6, "озвучка (Azure AI Speech)")
+        voice = tts.synthesize(narr, run_dir, allow_silent=args.no_upload)
         done("tts", t)
 
-        t = step(6, "субтитры + сборка (MoviePy)")
+        t = step(7, "субтитры + сборка (MoviePy)")
         video = assemble.assemble(board, imgs, voice, run_dir)
         done("assembly", t)
 
-        t = step(7, "ad-inserter")
+        t = step(8, "ad-inserter")
         ad_info = ads.insert_ad(video, run_dir, test=args.test_ad, campaign_id=args.ad_campaign)
         final = run_dir / "final.mp4"
         shutil.copy(ad_info["video"] if ad_info else video, final)
         done("ads", t)
 
-        t = step(8, "publisher")
+        t = step(9, "publisher")
         asm = load_json(run_dir / "assembly.json", default={}) or {}
         meta = upload.build_metadata(st, ad_info, asm.get("music_credit"))
         save_json(run_dir / "metadata.json", meta)
+        summary["voice"] = voice[0]["voice"] if voice else None
         summary.update({"topic": choice["topic"], "title": meta["title"], "video": str(final),
                         "duration": asm.get("duration"), "ad": ad_info and ad_info["campaign"]})
         if args.no_upload or args.test_ad:

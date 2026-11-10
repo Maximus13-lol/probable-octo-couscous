@@ -31,7 +31,7 @@ def setup_logging(level: int = logging.INFO) -> None:
         datefmt="%H:%M:%S",
     )
     # библиотеки слишком болтливы
-    for noisy in ("urllib3", "googleapiclient.discovery_cache", "PIL"):
+    for noisy in ("urllib3", "googleapiclient.discovery_cache", "PIL", "httpx", "huggingface_hub", "filelock"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
 
 

@@ -15,7 +15,7 @@ from .subtitles import CENTER_Y, build_subtitles
 from .utils import FPS, MUSIC_DIR, VIDEO_H, VIDEO_W, env, log, save_json
 
 CROSSFADE = 0.3
-PAUSE = 0.12        # короткий вдох между сценами
+PAUSE = 0.2         # пауза между сценами по умолчанию (обычно её задаёт narration-director)
 TAIL = 0.8          # хвост после последней фразы
 MUSIC_VOLUME = float(env("MUSIC_VOLUME", "0.12"))
 MUSIC_FADE_OUT = 2.5
@@ -58,8 +58,8 @@ def timeline(tts: list[dict]) -> tuple[list[float], float]:
     starts, t = [], 0.0
     for a in tts:
         starts.append(t)
-        t += a["duration"] + PAUSE
-    total = t - PAUSE + TAIL
+        t += a["duration"] + a.get("pause_after", PAUSE)  # паузу после сцены задаёт narration-director
+    total = t - tts[-1].get("pause_after", PAUSE) + TAIL
     return starts, total
 
 

@@ -1,4 +1,4 @@
-"""Субтитры из таймингов edge-tts: фразы по 2–4 слова, крупный жирный шрифт с обводкой,
+"""Субтитры из таймингов Azure (WordBoundary): фразы по 2–4 слова, крупный жирный шрифт с обводкой,
 внизу по центру (выше нижней подписи Shorts), активное слово подсвечивается."""
 from __future__ import annotations
 
@@ -32,11 +32,12 @@ class Word:
 
 
 def _n(s: str) -> str:
-    return re.sub(r"[^\wЁё]", "", s.lower())
+    s = s.replace("\u0301", "").replace("ё", "е").replace("Ё", "Е").lower()
+    return "".join(ch for ch in s if ch.isalnum())
 
 
 def align_words(scene_text: str, boundaries: list[dict], offset: float, scene_dur: float) -> list[Word]:
-    """Сопоставляет слова исходного текста (с пунктуацией) с WordBoundary от edge-tts."""
+    """Сопоставляет слова текста сцены (с пунктуацией и «ё») с WordBoundary от Azure."""
     tokens = [t for t in scene_text.split() if _n(t)]
     out: list[Word] = []
     j = 0
@@ -173,7 +174,7 @@ def write_srt(chunks: list[list[Word]], path: Path) -> None:
 def build_subtitles(board: dict, tts: list[dict], starts: list[float], total_dur: float, run_dir: Path):
     words: list[Word] = []
     for scene, audio, t0 in zip(board["scenes"], tts, starts):
-        words += align_words(scene["text"], audio["words"], t0, audio["duration"])
+        words += align_words(scene.get("display_text") or scene["text"], audio["words"], t0, audio["duration"])
     chunks = chunk_words(words)
     write_srt(chunks, run_dir / "subtitles.srt")
     events = build_events(chunks, total_dur)

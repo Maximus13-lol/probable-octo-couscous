@@ -45,14 +45,24 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
+          # Azure Speech SDK на Linux требует libasound2 (название пакета зависит от версии Ubuntu)
+          sudo apt-get install -y -qq libasound2t64 || sudo apt-get install -y -qq libasound2
           sudo apt-get install -y -qq fonts-montserrat || echo "Montserrat недоступен — будет DejaVu Sans Bold"
 
       - name: Python-зависимости
         run: pip install -r requirements.txt
 
+      - name: Кэш моделей RUAccent (~500 МБ, скачиваются с Hugging Face один раз)
+        uses: actions/cache@v4
+        with:
+          path: .cache/ruaccent
+          key: ruaccent-1.5.8.3-turbo3.1
+
       - name: Конвейер
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
+          AZURE_SPEECH_REGION: ${{ secrets.AZURE_SPEECH_REGION }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
@@ -78,6 +88,7 @@ jobs:
             output/*/final.mp4
             output/*/*.json
             output/*/subtitles.srt
+            output/*/narration/*
             output/*/ad_preview.jpg
             output/*/images/*.jpg
           if-no-files-found: warn
