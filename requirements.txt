@@ -1,5 +1,6 @@
 moviepy==2.2.1
-azure-cognitiveservices-speech==1.53.0
+azure-cognitiveservices-speech==1.53.0  # необязательный провайдер Azure
+faster-whisper==1.2.1
 ruaccent==1.5.8.3
 numpy>=1.26,<3
 Pillow>=10.0,<12.0

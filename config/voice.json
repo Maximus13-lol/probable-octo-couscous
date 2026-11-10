@@ -1,6 +1,24 @@
 {
+  "provider": "auto",
+  "_provider_comment": "auto — Azure, если заданы AZURE_SPEECH_KEY/REGION, иначе Gemini TTS; второй — запасной. Можно явно: gemini | azure",
+  "gemini": {
+    "voice": "Charon",
+    "models": [
+      "gemini-3.8-flash-tts",
+      "gemini-3.8-flash-lite-tts",
+      "gemini-3.1-flash-tts-preview"
+    ],
+    "style": null,
+    "_style_comment": "null — манеру чтения задаёт режиссёр (Gemini) или стиль по умолчанию; можно вписать свой текст по-английски",
+    "emphasis": "caps",
+    "min_alignment": 0.85
+  },
+  "azure": "Параметры ниже (voice, fallback_voices, style, base_rate, base_pitch, emphasis) относятся к Azure",
   "voice": "ru-RU-DmitryNeural",
-  "fallback_voices": ["ru-RU-SvetlanaNeural", "ru-RU-DariyaNeural"],
+  "fallback_voices": [
+    "ru-RU-SvetlanaNeural",
+    "ru-RU-DariyaNeural"
+  ],
   "style": "narration-professional",
   "style_degree": 1.0,
   "base_rate": "+4%",
@@ -13,10 +31,22 @@
   "emphasis": "prosody",
   "_emphasis_comment": "prosody — выделение ключевых слов темпом/высотой/громкостью (работает с любым голосом); emphasis — тег <emphasis> (Azure поддерживает его не для всех голосов)",
   "pauses_ms": {
-    "after_hook": [300, 600],
-    "before_twist": [300, 600],
-    "before_resolution": [300, 600],
-    "between_parts": [150, 250]
+    "after_hook": [
+      300,
+      600
+    ],
+    "before_twist": [
+      300,
+      600
+    ],
+    "before_resolution": [
+      300,
+      600
+    ],
+    "between_parts": [
+      150,
+      250
+    ]
   },
   "limits": {
     "rate_min": -15,

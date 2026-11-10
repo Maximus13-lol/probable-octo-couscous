@@ -296,9 +296,11 @@ def gemini_director(scenes: list[dict], cfg: dict, voice_styles: list[str]) -> l
   {p['before_twist'][0]}–{p['before_twist'][1]} мс перед поворотом сюжета, {p['before_resolution'][0]}–{p['before_resolution'][1]} мс перед развязкой,
   иначе {p['between_parts'][0]}–{p['between_parts'][1]} мс; у последней сцены 0.
 Стиль голоса (style) выбери из списка {voice_styles or '[] — список пуст, верни null'} или null.
+Также опиши по-английски манеру чтения для нейросетевого диктора (tts_style, 1–2 предложения):
+тембр, темп, настроение, как звучат вопросы и напряжённые места.
 
 Верни JSON:
-{{"style": null, "scenes": [{{"index": 0, "role": "hook", "pause_after_ms": 450,
+{{"style": null, "tts_style": "Calm, low, mysterious storyteller...", "scenes": [{{"index": 0, "role": "hook", "pause_after_ms": 450,
   "segments": [{{"text": "...", "pause_after_ms": 0, "rate": -4, "pitch": 6, "emphasis": ["исчезли"]}}]}}]}}"""
 
     def validate(obj):
@@ -359,6 +361,55 @@ def _speak_with_emphasis(text: str, words: list[WordInfo], seg: Segment, cfg: di
         pos = w.end
     out.append(escape(text[pos:seg.end]))
     return "".join(out).strip()
+
+
+# ---------------------------------------------------------------------- Gemini TTS
+GEMINI_DEFAULT_STYLE = (
+    "Narrate in Russian as a calm, mysterious storyteller of a short documentary about an unsolved mystery: "
+    "low, intimate voice, measured pace, quiet suspense, natural Russian intonation, "
+    "rising intonation on questions, slow down slightly at tense moments, no exaggerated acting."
+)
+TAG_RE = re.compile(r"<(short pause|long pause)>")
+
+
+def pause_tag(ms: int) -> str:
+    if ms >= 300:
+        return " <long pause> "
+    if ms >= 120:
+        return " <short pause> "
+    return " "
+
+
+def build_tts_text(text: str, words: list[WordInfo], segs: list[Segment], cfg: dict) -> str:
+    """Текст для Gemini TTS: дословный транскрипт + паузы-теги + КАПС у ключевых слов + ударения."""
+    caps = cfg.get("gemini", {}).get("emphasis", "caps") == "caps"
+    parts = []
+    for seg in segs:
+        targets = {norm(w) for w in seg.emphasis}
+        out, pos = [], seg.start
+        for w in words:
+            if w.end <= seg.start or w.start >= seg.end:
+                continue
+            out.append(text[pos:w.start])
+            tok = w.speak
+            if caps and norm(w.display) in targets:
+                tok = tok.upper()
+                targets.discard(norm(w.display))
+            out.append(tok)
+            pos = w.end
+        out.append(text[pos:seg.end])
+        parts.append("".join(out).strip())
+        if seg.pause_after_ms:
+            parts.append(pause_tag(seg.pause_after_ms).strip())
+    return " ".join(p for p in parts if p)
+
+
+def validate_tts_text(tts_text: str, expected: str) -> str | None:
+    if norm(TAG_RE.sub(" ", tts_text)) != norm(expected):
+        return "текст для Gemini TTS не совпадает со сценой"
+    if re.search(r"<(?!short pause>|long pause>)[^>]*>", tts_text):
+        return "недопустимый тег"
+    return None
 
 
 def _wrap(voice: str, inner: str) -> str:
@@ -423,6 +474,16 @@ def validate_ssml(ssml: str, expected_text: str) -> str | None:
     return None
 
 
+def gemini_script(narr: list[dict]) -> str:
+    """Весь ролик одним текстом для Gemini TTS: сцены разделены паузами-тегами."""
+    parts = []
+    for i, sc in enumerate(narr):
+        parts.append(sc["tts_text"])
+        if i < len(narr) - 1:
+            parts.append(pause_tag(sc.get("pause_after_ms", 200)).strip() or "<short pause>")
+    return " ".join(parts)
+
+
 # ====================================================================== шаг конвейера
 def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: list[str] | None = None) -> list[dict]:
     """Готовит для каждой сцены: display_text (с «ё»), ssml, plain_ssml, pause_after_ms.
@@ -434,10 +495,11 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
 
     style = cfg.get("style") if cfg.get("style") in (voice_styles or []) else None
     if cfg.get("style") and not style:
-        log.info("Голос %s не поддерживает стиль «%s» (или список стилей недоступен) — только prosody",
+        log.debug("Голос %s не поддерживает стиль «%s» (или список стилей недоступен) — только prosody",
                  voice, cfg.get("style"))
 
     plans, director = None, "rules"
+    tts_style = cfg.get("gemini", {}).get("style") or GEMINI_DEFAULT_STYLE
     if gemini.available():
         try:
             res = gemini_director(scenes, cfg, voice_styles or [])
@@ -445,6 +507,9 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
             director = "gemini"
             if res.get("style") in (voice_styles or []):
                 style = res["style"]
+            if isinstance(res.get("tts_style"), str) and 20 < len(res["tts_style"]) < 600 \
+                    and not cfg.get("gemini", {}).get("style"):
+                tts_style = res["tts_style"]
         except Exception as exc:  # noqa: BLE001
             log.warning("Gemini-режиссёр недоступен (%s) — разметка по правилам", exc)
     if plans is None:
@@ -466,6 +531,9 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
             problem2 = validate_ssml(ssml, text)
             if problem2:
                 raise RuntimeError(f"Даже простой SSML невалиден: {problem2}")
+        tts_text = build_tts_text(text, words, segs, cfg)
+        if validate_tts_text(tts_text, text):
+            tts_text = render(text, words, 0, len(text), "speak")
         display = render(text, words, 0, len(text), "display")
         sc["display_text"] = display
         stressed = [w.speak for w in words if w.stressed]
@@ -474,6 +542,7 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
         result.append({
             "index": sc["index"], "role": plan.get("role"), "text": text, "display_text": display,
             "ssml": ssml, "plain_ssml": fallback, "ssml_fallback": bool(problem),
+            "tts_text": tts_text, "tts_style": tts_style,
             "pause_after_ms": _clamp(plan.get("pause_after_ms", 0), 0, 900) if sc is not scenes[-1] else 0,
             "stressed_words": stressed,
             "yo_words": [w.display for w in words if w.source == "yo"],
@@ -482,7 +551,10 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
     (out_dir / "full.ssml.txt").write_text("\n\n".join(f"<!-- сцена {r['index']} ({r['role']}), пауза после: "
                                                       f"{r['pause_after_ms']} мс -->\n{r['ssml']}" for r in result),
                                            encoding="utf-8")
-    save_json(run_dir / "narration.json", {"voice": voice, "style": style, "director": director, "scenes": result})
+    (out_dir / "gemini_tts_script.txt").write_text(
+        f"STYLE: {tts_style}\n\n" + gemini_script(result), encoding="utf-8")
+    save_json(run_dir / "narration.json", {"voice": voice, "style": style, "tts_style": tts_style,
+                                           "director": director, "scenes": result})
     log.info("Режиссура: %s, голос %s, стиль %s; ударения: %s", director, voice, style or "—",
              ", ".join(stressed_total) or "нет")
     return result

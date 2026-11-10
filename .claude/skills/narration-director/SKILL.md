@@ -1,6 +1,6 @@
 ---
 name: narration-director
-description: Режиссура озвучки Shorts — ударения (RUAccent + stress_dict.json), буква «ё», паузы, темп, высота и выделение ключевых слов, сборка и валидация SSML для Azure AI Speech. Используй при жалобах на неправильные ударения или интонации, при правке stress_dict.json, разметки SSML или выборе голоса.
+description: Режиссура озвучки Shorts — ударения (RUAccent + stress_dict.json), буква «ё», паузы, темп, высота и выделение ключевых слов, текст для Gemini TTS (теги пауз, КАПС, манера чтения) и SSML для Azure. Используй при жалобах на неправильные ударения или интонации, при правке stress_dict.json, разметки SSML или выборе голоса.
 ---
 
 # narration-director (`src/narration.py`, конфиг `config/voice.json`, словарь `stress_dict.json`)
@@ -37,6 +37,15 @@ description: Режиссура озвучки Shorts — ударения (RUAc
 - `mstts:silence` Leading/Tailing-exact 50 мс — точные края, паузы между сценами задаёт сборка.
 - Без Gemini работает `rule_director` (паузы по предложениям, после хука, перед «Но/Однако…» и развязкой).
 
+## Gemini TTS
+- `build_tts_text`: дословный текст + `<short pause>` (120–299 мс) / `<long pause>` (≥300 мс) + ключевые слова
+  ЗАГЛАВНЫМИ (`gemini.emphasis: caps`) + ударения U+0301. Темп/высоту по фрагментам Gemini TTS не принимает —
+  они выражаются через общую манеру `tts_style` (её пишет режиссёр по-английски или берётся
+  `GEMINI_DEFAULT_STYLE`; свою можно задать в `config/voice.json → gemini.style`).
+- `validate_tts_text`: без тегов текст совпадает со сценой, других тегов нет; иначе — текст без разметки.
+- Работает ли U+0301 в Gemini TTS — проверять `python -m src.voice_test --stress-test`; если мешает —
+  `stress.method: none`.
+
 ## Валидация и откат
 `validate_ssml`: XML парсится, только разрешённые теги, корректные `break`/`prosody`, текст совпадает
 со сценой. Ошибка → `plain_ssml` (текст с «ё» и ударениями + паузы между предложениями). Если Azure
@@ -44,4 +53,4 @@ description: Режиссура озвучки Shorts — ударения (RUAc
 
 ## Артефакты
 `output/<run>/narration/scene_XX.ssml`, `narration/full.ssml.txt` (вся разметка с паузами между сценами),
-`narration.json` (голос, стиль, режиссёр, ударные слова, слова с «ё»).
+`narration/gemini_tts_script.txt` (манера + текст для Gemini TTS), `narration.json` (голос, стили, режиссёр, ударные слова, слова с «ё»).

@@ -1,13 +1,13 @@
-"""Прослушивание русских нейроголосов Azure, чтобы выбрать лучший.
+"""Прослушивание голосов, чтобы выбрать лучший.
 
-    python -m src.voice_test                       # все голоса ru-RU, тестовая фраза
-    python -m src.voice_test --text "Своя фраза?"  # своя фраза
-    python -m src.voice_test --multilingual        # + многоязычные голоса, умеющие говорить по-русски
-    python -m src.voice_test --styles              # + каждый стиль голоса (если есть)
-    python -m src.voice_test --stress-test         # сравнение: без ударений / с ударениями U+0301 / через RUAccent
+    python -m src.voice_test                       # голоса Gemini TTS (подборка ~8 голосов)
+    python -m src.voice_test --all                 # все 30 голосов Gemini (расходует бесплатный лимит!)
+    python -m src.voice_test --provider azure      # русские нейроголоса Azure (нужны ключи Azure)
+    python -m src.voice_test --text "Своя фраза?"
+    python -m src.voice_test --stress-test         # ударения: без разметки / вручную (U+0301) / через RUAccent
 
-Результат: output/voice_test/*.mp3 и index.html с плеерами (открыть в браузере).
-Выбранный голос пропишите в config/voice.json → "voice".
+Результат: output/voice_test/*.wav|mp3 и index.html с плеерами (открыть в браузере).
+Выбранный голос впишите в config/voice.json: для Gemini — "gemini" → "voice", для Azure — "voice".
 """
 from __future__ import annotations
 
@@ -18,24 +18,37 @@ from xml.sax.saxutils import escape, quoteattr
 
 import requests
 
-from .narration import ACUTE, MSTTS_NS, SSML_NS, Stresser, render, voice_config
-from .tts import list_voices
-from .utils import OUTPUT_DIR, env, retry, setup_logging
+from .narration import GEMINI_DEFAULT_STYLE, MSTTS_NS, SSML_NS, Stresser, render, voice_config
+from .tts import DEFAULT_GEMINI_MODELS, QuotaExhausted, azure_available, gemini_available, gemini_tts, list_voices
+from .utils import OUTPUT_DIR, env, log, retry, setup_logging
 
-DEFAULT_TEXT = ("Почему три смотрителя маяка исчезли без следа? "
-                "Дверь в замке была заперта, а на столе остался нетронутый ужин. "
+DEFAULT_TEXT = ("Почему три смотрителя маяка исчезли без следа? <short pause> "
+                "Дверь в замке была заперта, а на столе остался нетронутый ужин. <long pause> "
                 "Ответ нашли лишь спустя много лет.")
+# Подборка голосов Gemini под мистического рассказчика (описания — из документации Google)
+GEMINI_PICKS = {
+    "Charon": "Informative", "Algenib": "Gravelly", "Orus": "Firm", "Gacrux": "Mature",
+    "Iapetus": "Clear", "Rasalgethi": "Informative", "Sulafat": "Warm", "Kore": "Firm",
+}
+GEMINI_ALL = {
+    "Zephyr": "Bright", "Puck": "Upbeat", "Charon": "Informative", "Kore": "Firm", "Fenrir": "Excitable",
+    "Leda": "Youthful", "Orus": "Firm", "Aoede": "Breezy", "Callirrhoe": "Easy-going", "Autonoe": "Bright",
+    "Enceladus": "Breathy", "Iapetus": "Clear", "Umbriel": "Easy-going", "Algieba": "Smooth", "Despina": "Smooth",
+    "Erinome": "Clear", "Algenib": "Gravelly", "Rasalgethi": "Informative", "Laomedeia": "Upbeat",
+    "Achernar": "Soft", "Alnilam": "Firm", "Schedar": "Even", "Gacrux": "Mature", "Pulcherrima": "Forward",
+    "Achird": "Friendly", "Zubenelgenubi": "Casual", "Vindemiatrix": "Gentle", "Sadachbia": "Lively",
+    "Sadaltager": "Knowledgeable", "Sulafat": "Warm",
+}
 STRESS_PAIRS = [
     ("Старый замок стоял на скале.", "Старый за́мок стоял на скале."),
     ("Он повесил на дверь тяжёлый замок.", "Он повесил на дверь тяжёлый замо́к."),
     ("Это была настоящая мука.", "Это была настоящая му́ка."),
     ("Мука для хлеба кончилась.", "Мука́ для хлеба кончилась."),
-    ("Все ждали ответа, но всё было тихо.", "Все́ ждали ответа, но всё было тихо."),
 ]
 
 
 @retry(tries=3, base_delay=3, exceptions=(requests.RequestException,), label="azure.rest")
-def synth_rest(ssml: str, out: Path) -> None:
+def azure_rest(ssml: str, out: Path) -> None:
     region, key = env("AZURE_SPEECH_REGION"), env("AZURE_SPEECH_KEY")
     r = requests.post(
         f"https://{region}.tts.speech.microsoft.com/cognitiveservices/v1",
@@ -50,70 +63,105 @@ def synth_rest(ssml: str, out: Path) -> None:
     out.write_bytes(r.content)
 
 
-def ssml_for(voice: str, text: str, style: str | None = None, lang: str = "ru-RU") -> str:
+def azure_ssml(voice: str, text: str, style: str | None = None, lang: str = "ru-RU") -> str:
+    text = text.replace("<short pause>", "").replace("<long pause>", "")
     body = escape(text)
     if style:
         body = f'<mstts:express-as style={quoteattr(style)}>{body}</mstts:express-as>'
-    if lang != "ru-RU":  # многоязычный голос: явно просим говорить по-русски
+    if lang != "ru-RU":
         body = f'<lang xml:lang="ru-RU">{body}</lang>'
     return (f'<speak version="1.0" xmlns="{SSML_NS}" xmlns:mstts="{MSTTS_NS}" xml:lang="{lang}">'
             f'<voice name={quoteattr(voice)}>{body}</voice></speak>')
 
 
+def gemini_say(text: str, voice: str, out: Path) -> None:
+    cfg = voice_config().get("gemini", {})
+    style = cfg.get("style") or GEMINI_DEFAULT_STYLE
+    last = None
+    for model in cfg.get("models") or DEFAULT_GEMINI_MODELS:
+        try:
+            out.write_bytes(gemini_tts(text, style, voice, model))
+            return
+        except QuotaExhausted:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            log.warning("%s: %s", model, exc)
+    raise RuntimeError(str(last))
+
+
 def main(argv=None) -> None:
     setup_logging()
     p = argparse.ArgumentParser(prog="python -m src.voice_test")
+    p.add_argument("--provider", choices=["gemini", "azure"], default=None)
     p.add_argument("--text", default=DEFAULT_TEXT)
-    p.add_argument("--multilingual", action="store_true")
-    p.add_argument("--styles", action="store_true")
+    p.add_argument("--all", action="store_true", help="все голоса Gemini (30 запросов)")
+    p.add_argument("--multilingual", action="store_true", help="Azure: + многоязычные голоса")
+    p.add_argument("--styles", action="store_true", help="Azure: + стили голоса")
     p.add_argument("--stress-test", action="store_true")
-    p.add_argument("--voice", help="голос для --stress-test (по умолчанию из config/voice.json)")
+    p.add_argument("--voice", help="голос для --stress-test")
     a = p.parse_args(argv)
-    if not (env("AZURE_SPEECH_KEY") and env("AZURE_SPEECH_REGION")):
+    provider = a.provider or ("azure" if azure_available() else "gemini")
+    if provider == "gemini" and not gemini_available():
+        raise SystemExit("Задайте GEMINI_API_KEY")
+    if provider == "azure" and not azure_available():
         raise SystemExit("Задайте AZURE_SPEECH_KEY и AZURE_SPEECH_REGION")
 
     out = OUTPUT_DIR / "voice_test"
     out.mkdir(parents=True, exist_ok=True)
-    rows: list[tuple[str, str, str]] = []  # (подпись, файл, детали)
-    voices = list_voices()
-    ru = [v for v in voices if v.get("Locale") == "ru-RU" and v.get("VoiceType") == "Neural"]
-    multi = [v for v in voices if a.multilingual and v.get("Locale") != "ru-RU"
-             and "ru-RU" in (v.get("SecondaryLocaleList") or [])]
+    rows: list[tuple[str, str, str]] = []
+    cfg = voice_config()
 
-    if a.stress_test:
-        voice = a.voice or voice_config()["voice"]
-        stresser = Stresser(voice_config())
-        for i, (plain, manual) in enumerate(STRESS_PAIRS):
-            words = stresser.process(plain)
-            auto = render(plain, words, 0, len(plain), "speak")
-            for kind, text in (("без разметки", plain), ("ударение вручную", manual), ("RUAccent", auto)):
-                f = out / f"stress_{i}_{kind.replace(' ', '_')}.mp3"
-                synth_rest(ssml_for(voice, text), f)
-                rows.append((f"{voice} — {kind}", f.name, text.replace(ACUTE, "́")))
-    else:
-        for v in ru + multi:
-            name, lang = v["ShortName"], v["Locale"]
-            styles = (v.get("StyleList") or []) if a.styles else []
-            for style in [None] + styles:
-                f = out / f"{name}{'_' + style if style else ''}.mp3"
-                synth_rest(ssml_for(name, a.text, style, lang), f)
-                detail = (f"{v.get('Gender')}, {v.get('LocalName') or ''}; стили: "
-                          f"{', '.join(v.get('StyleList') or []) or 'нет'}")
-                rows.append((f"{name}{' / ' + style if style else ''}", f.name, detail))
-                print("готово:", f.name)
+    def say(voice: str, text: str, fname: str, lang: str = "ru-RU", style: str | None = None) -> None:
+        if provider == "gemini":
+            gemini_say(text, voice, out / fname)
+        else:
+            azure_rest(azure_ssml(voice, text, style, lang), out / fname)
 
-    page = ["<!doctype html><meta charset='utf-8'><title>Голоса Azure</title>",
-            "<style>body{font-family:sans-serif;max-width:900px;margin:24px auto;padding:0 16px}"
-            "td{padding:6px 10px;border-bottom:1px solid #ddd}</style>",
-            f"<h1>Голоса Azure</h1><p>Фраза: {html.escape(a.text if not a.stress_test else 'тест ударений')}</p><table>"]
+    ext = "wav" if provider == "gemini" else "mp3"
+    try:
+        if a.stress_test:
+            voice = a.voice or (cfg.get("gemini", {}).get("voice", "Charon") if provider == "gemini" else cfg["voice"])
+            stresser = Stresser(cfg)
+            for i, (plain, manual) in enumerate(STRESS_PAIRS):
+                auto = render(plain, stresser.process(plain), 0, len(plain), "speak")
+                for kind, text in (("без разметки", plain), ("ударение вручную", manual), ("RUAccent", auto)):
+                    fname = f"stress_{i}_{kind.replace(' ', '_')}.{ext}"
+                    say(voice, text, fname)
+                    rows.append((f"{provider}:{voice} — {kind}", fname, text))
+                    print("готово:", fname)
+        elif provider == "gemini":
+            for voice, desc in (GEMINI_ALL if a.all else GEMINI_PICKS).items():
+                fname = f"gemini_{voice}.{ext}"
+                say(voice, a.text, fname)
+                rows.append((f"Gemini: {voice}", fname, f"по описанию Google: {desc}"))
+                print("готово:", fname)
+        else:
+            voices = list_voices()
+            ru = [v for v in voices if v.get("Locale") == "ru-RU" and v.get("VoiceType") == "Neural"]
+            multi = [v for v in voices if a.multilingual and v.get("Locale") != "ru-RU"
+                     and "ru-RU" in (v.get("SecondaryLocaleList") or [])]
+            for v in ru + multi:
+                for style in [None] + ((v.get("StyleList") or []) if a.styles else []):
+                    fname = f"azure_{v['ShortName']}{'_' + style if style else ''}.{ext}"
+                    say(v["ShortName"], a.text, fname, v["Locale"], style)
+                    rows.append((f"Azure: {v['ShortName']}{' / ' + style if style else ''}", fname,
+                                 f"{v.get('Gender')}; стили: {', '.join(v.get('StyleList') or []) or 'нет'}"))
+                    print("готово:", fname)
+    except QuotaExhausted as exc:
+        log.warning("Бесплатный лимит на сегодня исчерпан (%s) — сохраняю то, что успели озвучить", exc)
+
+    page = ["<!doctype html><meta charset='utf-8'><meta name=viewport content='width=device-width'>",
+            "<title>Голоса</title><style>body{font-family:sans-serif;max-width:900px;margin:24px auto;padding:0 16px}"
+            "td{padding:8px;border-bottom:1px solid #ddd}audio{width:260px}</style>",
+            f"<h1>Голоса ({provider})</h1><p>Фраза: {html.escape(a.text if not a.stress_test else 'тест ударений')}</p><table>"]
     for label, fname, detail in rows:
         page.append(f"<tr><td><b>{html.escape(label)}</b><br><small>{html.escape(detail)}</small></td>"
                     f"<td><audio controls preload=none src='{fname}'></audio></td></tr>")
-    page.append("</table><p>Выбранный голос впишите в <code>config/voice.json</code> → <code>voice</code>.</p>")
+    where = '"gemini" → "voice"' if provider == "gemini" else '"voice"'
+    page.append(f"</table><p>Выбранный голос впишите в <code>config/voice.json</code> → <code>{html.escape(where)}</code>.</p>")
     (out / "index.html").write_text("\n".join(page), encoding="utf-8")
     print(f"\nГотово: {len(rows)} файлов → {out / 'index.html'}")
-    if not a.stress_test:
-        print("Русские голоса:", ", ".join(v["ShortName"] for v in ru) or "не найдены (проверьте регион)")
 
 
 if __name__ == "__main__":
