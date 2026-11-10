@@ -7,7 +7,7 @@ DEMO_STORY = {
     "hook": "Куда исчезли три человека с острова, с которого невозможно уйти?",
     "story": (
         "Куда исчезли три человека с острова, с которого невозможно уйти? "
-        "Декабрь 1900 года. Шотландия, крошечный скалистый остров Эйлеан-Мор. "
+        "Декабрь тысяча девятисотого года. Шотландия, крошечный скалистый остров Эйлеан-Мор. "
         "Три смотрителя круглые сутки следят за маяком. "
         "Но однажды капитан проходящего корабля замечает: огонь не горит. "
         "Через одиннадцать дней на остров высаживается сменщик. "
@@ -31,7 +31,7 @@ DEMO_STORYBOARD = {
     "scenes": [
         {"text": "Куда исчезли три человека с острова, с которого невозможно уйти?",
          "prompt": "a lonely lighthouse on a tiny rocky island in a stormy North Atlantic sea at dusk, no people, mysterious"},
-        {"text": "Декабрь 1900 года. Шотландия, крошечный скалистый остров Эйлеан-Мор.",
+        {"text": "Декабрь тысяча девятисотого года. Шотландия, крошечный скалистый остров Эйлеан-Мор.",
          "prompt": "aerial view of a small steep rocky Scottish island with a stone lighthouse, grey winter sea, 1900"},
         {"text": "Три смотрителя круглые сутки следят за маяком.",
          "prompt": "three lighthouse keepers in oilskin coats standing near the lighthouse lantern at night, keeper in front"},

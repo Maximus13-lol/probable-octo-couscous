@@ -60,7 +60,8 @@ class WordInfo:
     display: str        # с «ё» — для субтитров
     speak: str          # с U+0301 — для синтеза
     stressed: bool = False
-    source: str = ""    # ruaccent | dict | yo
+    source: str = ""    # ruaccent | dict | yo | gemini
+    options: list[str] = field(default_factory=list)  # варианты ударения омографа («з+амок», «зам+ок»)
 
 
 def load_stress_dict() -> dict[str, str]:
@@ -138,11 +139,24 @@ class Stresser:
         return self._acc
 
     def is_homograph(self, word: str) -> bool:
+        return bool(self.homograph_options(word))
+
+    def homograph_options(self, word: str) -> list[str]:
         m = self._model()
         if not m:
-            return False
+            return []
         low = word.lower()
-        return low in m.omographs or low.replace("ё", "е") in m.omographs
+        opts = m.omographs.get(low) or m.omographs.get(low.replace("ё", "е")) or []
+        return [o for o in opts if isinstance(o, str)]
+
+    def make_word(self, s: int, e: int, w: str, acc: str, source: str) -> "WordInfo":
+        display, idx = _apply_acc(w, acc)
+        vowels = sum(ch in VOWELS for ch in display)
+        speak = display
+        if idx is not None and vowels > 1 and self.method == "acute" and "ё" not in display.lower() \
+                and display[idx] in VOWELS:
+            speak = display[: idx + 1] + ACUTE + display[idx + 1:]
+        return WordInfo(s, e, display, speak, stressed=speak != display, source=source)
 
     def process(self, text: str) -> list[WordInfo]:
         words = [(m.start(), m.end(), m.group()) for m in WORD_RE.finditer(text)]
@@ -180,9 +194,12 @@ class Stresser:
             speak = display
             if need and display[idx] in VOWELS:
                 speak = display[: idx + 1] + ACUTE + display[idx + 1:]
-            if display != w and source != "dict":
+            if display != w and source != "dict" and not speak != display:
                 source = "yo"
-            result.append(WordInfo(s, e, display, speak, stressed=speak != display, source=source))
+            info = WordInfo(s, e, display, speak, stressed=speak != display, source=source)
+            if source != "dict":
+                info.options = self.homograph_options(w)
+            result.append(info)
         return result
 
 
@@ -197,6 +214,45 @@ def render(text: str, words: list[WordInfo], start: int, end: int, kind: str) ->
         pos = w.end
     out.append(text[pos:end])
     return "".join(out)
+
+
+def gemini_resolve_homographs(items: list[tuple[str, WordInfo]], stresser: Stresser) -> int:
+    """Gemini выбирает ударение омографа по контексту из вариантов RUAccent. Возвращает число исправлений."""
+    todo = [(ctx, w) for ctx, w in items if len(w.options) > 1]
+    if not todo or not gemini.available():
+        return 0
+    lines = []
+    for i, (ctx, w) in enumerate(todo):
+        lines.append(f"{i}. Предложение: «{ctx}». Слово: «{w.display}». Варианты: "
+                     + ", ".join(f"{k}) {o}" for k, o in enumerate(w.options)))
+    prompt = ("Ты корректор русской речи для диктора. Для каждого слова выбери правильное ударение по смыслу "
+              "предложения («+» стоит перед ударной гласной).\n" + "\n".join(lines)
+              + '\nВерни JSON: {"choices": [номер варианта для 0, для 1, ...]}')
+
+    def validate(obj):
+        ch = obj.get("choices") if isinstance(obj, dict) else None
+        if not isinstance(ch, list) or len(ch) != len(todo):
+            return f"нужен список choices из {len(todo)} чисел"
+        if any(not isinstance(c, int) or not 0 <= c < len(w.options) for c, (_, w) in zip(ch, todo)):
+            return "номер варианта вне диапазона"
+        return None
+
+    try:
+        res = gemini.generate_json(prompt, temperature=0.0, validate=validate, attempts=2)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Gemini не проверил омографы (%s) — оставляю выбор RUAccent", exc)
+        return 0
+    changed = 0
+    for c, (_, w) in zip(res["choices"], todo):
+        new = stresser.make_word(w.start, w.end, _strip_marks(w.display), w.options[c], "gemini")
+        if new.speak != w.speak:
+            changed += 1
+        w.display, w.speak, w.stressed, w.source = new.display, new.speak, new.stressed, "gemini"
+    return changed
+
+
+def _strip_marks(s: str) -> str:
+    return s.replace(ACUTE, "")
 
 
 # ====================================================================== режиссёр
@@ -474,6 +530,42 @@ def validate_ssml(ssml: str, expected_text: str) -> str | None:
     return None
 
 
+# ---------------------------------------------------------------------- Vosk TTS
+_TRANSLIT = str.maketrans({
+    "a": "а", "b": "б", "c": "к", "d": "д", "e": "е", "f": "ф", "g": "г", "h": "х", "i": "и", "j": "дж",
+    "k": "к", "l": "л", "m": "м", "n": "н", "o": "о", "p": "п", "q": "к", "r": "р", "s": "с", "t": "т",
+    "u": "у", "v": "в", "w": "в", "x": "кс", "y": "й", "z": "з",
+})
+
+
+def vosk_clean(s: str) -> str:
+    """Текст, который гарантированно примет Vosk: ударение «+» перед гласной, только кириллица и разрешённая
+    пунктуация; цифры — словами (num2words), латиница — транслитом."""
+    s = re.sub(r"(.)\u0301", r"+\1", s)                      # U+0301 после гласной → «+» перед ней
+    s = s.replace("–", "—").replace("…", "...").replace("ё\u0308", "ё")
+    s = re.sub(r"[«»“”„\"]", "", s)
+
+    def num(m):
+        try:
+            from num2words import num2words
+            return num2words(int(m.group()), lang="ru")
+        except Exception:  # noqa: BLE001
+            return " "
+    s = re.sub(r"\d+", num, s)
+    s = re.sub(r"[A-Za-z]+", lambda m: m.group().lower().translate(_TRANSLIT), s)
+    s = re.sub(r"[^А-Яа-яЁё+ !'(),\-.:;?—]", " ", s)
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def vosk_segments(text: str, words: list[WordInfo], segs: list[Segment]) -> list[dict]:
+    out = []
+    for seg in segs:
+        t = vosk_clean(render(text, words, seg.start, seg.end, "speak"))
+        if t:
+            out.append({"text": t, "rate": seg.rate, "pause_after_ms": seg.pause_after_ms})
+    return out
+
+
 def gemini_script(narr: list[dict]) -> str:
     """Весь ролик одним текстом для Gemini TTS: сцены разделены паузами-тегами."""
     parts = []
@@ -518,9 +610,19 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
     out_dir = run_dir / "narration"
     out_dir.mkdir(parents=True, exist_ok=True)
     result, stressed_total = [], []
-    for sc, plan in zip(scenes, plans):
+    all_words = [stresser.process(sc["text"]) for sc in scenes]
+    items = []
+    for sc, words in zip(scenes, all_words):
+        for w in words:
+            if w.options:
+                sent = next((m.group() for m in re.finditer(r"[^.!?…]+[.!?…]*", sc["text"])
+                             if m.start() <= w.start < m.end()), sc["text"])
+                items.append((sent.strip(), w))
+    fixed = gemini_resolve_homographs(items, stresser)
+    if fixed:
+        log.info("Gemini исправил ударения в %d омографах", fixed)
+    for sc, plan, words in zip(scenes, plans, all_words):
         text = sc["text"]
-        words = stresser.process(text)
         segs = build_segments(text, plan, cfg)
         ssml = build_ssml(text, words, segs, cfg, voice, style)
         problem = validate_ssml(ssml, text)
@@ -536,13 +638,14 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
             tts_text = render(text, words, 0, len(text), "speak")
         display = render(text, words, 0, len(text), "display")
         sc["display_text"] = display
+        vsegs = vosk_segments(text, words, segs)
         stressed = [w.speak for w in words if w.stressed]
         stressed_total += stressed
         (out_dir / f"scene_{sc['index']:02d}.ssml").write_text(ssml, encoding="utf-8")
         result.append({
             "index": sc["index"], "role": plan.get("role"), "text": text, "display_text": display,
             "ssml": ssml, "plain_ssml": fallback, "ssml_fallback": bool(problem),
-            "tts_text": tts_text, "tts_style": tts_style,
+            "tts_text": tts_text, "tts_style": tts_style, "vosk_segments": vsegs,
             "pause_after_ms": _clamp(plan.get("pause_after_ms", 0), 0, 900) if sc is not scenes[-1] else 0,
             "stressed_words": stressed,
             "yo_words": [w.display for w in words if w.source == "yo"],
@@ -551,6 +654,12 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
     (out_dir / "full.ssml.txt").write_text("\n\n".join(f"<!-- сцена {r['index']} ({r['role']}), пауза после: "
                                                       f"{r['pause_after_ms']} мс -->\n{r['ssml']}" for r in result),
                                            encoding="utf-8")
+    lines = []
+    for r in result:
+        lines.append(f"# сцена {r['index']} ({r['role']}), пауза после сцены: {r['pause_after_ms']} мс")
+        for v in r["vosk_segments"]:
+            lines.append(f"  [темп {v['rate']:+d}%] {v['text']}" + (f"  ⏸ {v['pause_after_ms']} мс" if v["pause_after_ms"] else ""))
+    (out_dir / "vosk_script.txt").write_text("\n".join(lines), encoding="utf-8")
     (out_dir / "gemini_tts_script.txt").write_text(
         f"STYLE: {tts_style}\n\n" + gemini_script(result), encoding="utf-8")
     save_json(run_dir / "narration.json", {"voice": voice, "style": style, "tts_style": tts_style,

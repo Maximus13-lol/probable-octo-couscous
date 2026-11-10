@@ -1,6 +1,7 @@
 """Прослушивание голосов, чтобы выбрать лучший.
 
-    python -m src.voice_test                       # голоса Gemini TTS (подборка ~8 голосов)
+    python -m src.voice_test                       # 5 голосов Vosk (локально, бесплатно)
+    python -m src.voice_test --provider gemini     # голоса Gemini TTS (подборка ~8 голосов)
     python -m src.voice_test --all                 # все 30 голосов Gemini (расходует бесплатный лимит!)
     python -m src.voice_test --provider azure      # русские нейроголоса Azure (нужны ключи Azure)
     python -m src.voice_test --text "Своя фраза?"
@@ -19,7 +20,9 @@ from xml.sax.saxutils import escape, quoteattr
 import requests
 
 from .narration import GEMINI_DEFAULT_STYLE, MSTTS_NS, SSML_NS, Stresser, render, voice_config
-from .tts import DEFAULT_GEMINI_MODELS, QuotaExhausted, azure_available, gemini_available, gemini_tts, list_voices
+from .narration import vosk_clean
+from .tts import (DEFAULT_GEMINI_MODELS, QuotaExhausted, _vosk_synth, azure_available, gemini_available, gemini_tts,
+                  list_voices, vosk_available)
 from .utils import OUTPUT_DIR, env, log, retry, setup_logging
 
 DEFAULT_TEXT = ("Почему три смотрителя маяка исчезли без следа? <short pause> "
@@ -93,7 +96,7 @@ def gemini_say(text: str, voice: str, out: Path) -> None:
 def main(argv=None) -> None:
     setup_logging()
     p = argparse.ArgumentParser(prog="python -m src.voice_test")
-    p.add_argument("--provider", choices=["gemini", "azure"], default=None)
+    p.add_argument("--provider", choices=["vosk", "gemini", "azure"], default=None)
     p.add_argument("--text", default=DEFAULT_TEXT)
     p.add_argument("--all", action="store_true", help="все голоса Gemini (30 запросов)")
     p.add_argument("--multilingual", action="store_true", help="Azure: + многоязычные голоса")
@@ -101,7 +104,9 @@ def main(argv=None) -> None:
     p.add_argument("--stress-test", action="store_true")
     p.add_argument("--voice", help="голос для --stress-test")
     a = p.parse_args(argv)
-    provider = a.provider or ("azure" if azure_available() else "gemini")
+    provider = a.provider or "vosk"
+    if provider == "vosk" and not vosk_available():
+        raise SystemExit("Установите vosk-tts: pip install -r requirements.txt")
     if provider == "gemini" and not gemini_available():
         raise SystemExit("Задайте GEMINI_API_KEY")
     if provider == "azure" and not azure_available():
@@ -113,15 +118,26 @@ def main(argv=None) -> None:
     cfg = voice_config()
 
     def say(voice: str, text: str, fname: str, lang: str = "ru-RU", style: str | None = None) -> None:
-        if provider == "gemini":
+        if provider == "vosk":
+            import wave
+            synth = _vosk_synth()
+            clean = vosk_clean(text.replace("<short pause>", ",").replace("<long pause>", "..."))
+            audio = synth.synth_audio(clean, speaker_id=int(voice))
+            with wave.open(str(out / fname), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(int(synth.model.config["audio"].get("sample_rate", 22050)))
+                w.writeframes(audio.tobytes())
+        elif provider == "gemini":
             gemini_say(text, voice, out / fname)
         else:
             azure_rest(azure_ssml(voice, text, style, lang), out / fname)
 
-    ext = "wav" if provider == "gemini" else "mp3"
+    ext = "mp3" if provider == "azure" else "wav"
     try:
         if a.stress_test:
-            voice = a.voice or (cfg.get("gemini", {}).get("voice", "Charon") if provider == "gemini" else cfg["voice"])
+            voice = a.voice or {"gemini": cfg.get("gemini", {}).get("voice", "Charon"),
+                                "vosk": str(cfg.get("vosk", {}).get("speaker", 3))}.get(provider, cfg["voice"])
             stresser = Stresser(cfg)
             for i, (plain, manual) in enumerate(STRESS_PAIRS):
                 auto = render(plain, stresser.process(plain), 0, len(plain), "speak")
@@ -130,6 +146,12 @@ def main(argv=None) -> None:
                     say(voice, text, fname)
                     rows.append((f"{provider}:{voice} — {kind}", fname, text))
                     print("готово:", fname)
+        elif provider == "vosk":
+            for sp in range(5):
+                fname = f"vosk_{sp}.{ext}"
+                say(str(sp), a.text, fname)
+                rows.append((f"Vosk: голос {sp}", fname, "выбран сейчас" if sp == cfg.get("vosk", {}).get("speaker", 3) else ""))
+                print("готово:", fname)
         elif provider == "gemini":
             for voice, desc in (GEMINI_ALL if a.all else GEMINI_PICKS).items():
                 fname = f"gemini_{voice}.{ext}"
@@ -158,7 +180,7 @@ def main(argv=None) -> None:
     for label, fname, detail in rows:
         page.append(f"<tr><td><b>{html.escape(label)}</b><br><small>{html.escape(detail)}</small></td>"
                     f"<td><audio controls preload=none src='{fname}'></audio></td></tr>")
-    where = '"gemini" → "voice"' if provider == "gemini" else '"voice"'
+    where = {"gemini": '"gemini" → "voice"', "vosk": '"vosk" → "speaker"'}.get(provider, '"voice"')
     page.append(f"</table><p>Выбранный голос впишите в <code>config/voice.json</code> → <code>{html.escape(where)}</code>.</p>")
     (out / "index.html").write_text("\n".join(page), encoding="utf-8")
     print(f"\nГотово: {len(rows)} файлов → {out / 'index.html'}")

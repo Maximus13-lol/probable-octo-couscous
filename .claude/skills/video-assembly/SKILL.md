@@ -1,12 +1,16 @@
 ---
 name: video-assembly
-description: Сборка вертикального видео 1080x1920 в MoviePy — озвучка Gemini TTS (или Azure), длительность сцены по озвучке, Ken Burns, crossfade 0.3 с, субтитры по таймингам слов (faster-whisper / Azure WordBoundary), лоу-фай музыка 12% с затуханием. Используй при правке монтажа, субтитров, звука или скорости рендера.
+description: Сборка вертикального видео 1080x1920 в MoviePy — озвучка Vosk TTS (запасные Gemini TTS / Azure), длительность сцены по озвучке, Ken Burns, crossfade 0.3 с, субтитры по таймингам слов (faster-whisper / Azure WordBoundary), лоу-фай музыка 12% с затуханием. Используй при правке монтажа, субтитров, звука или скорости рендера.
 ---
 
 # video-assembly (`src/tts.py`, `src/subtitles.py`, `src/assemble.py`, `src/music_gen.py`)
 
 ## Озвучка (`tts.py`, `align.py`)
-- Провайдер — `config/voice.json → provider` (`auto`: Azure, если есть ключи, иначе Gemini TTS; второй — запасной).
+- Провайдер — `config/voice.json → provider` (по умолчанию `vosk`; запасные — gemini, azure, если есть ключи).
+- **Vosk TTS** (Apache 2.0, локально, `vosk-model-tts-ru-0.9-multi`, голос `vosk.speaker = 3`): сцена синтезируется
+  по `vosk_segments` (текст с «+»-ударениями, темп `speech_rate`, тишина `pause_after_ms`), → wav/mp3,
+  тайминги — `align.align_script` по аудио сцены. Vosk падает на цифрах, латинице, «», …, – —
+  всё это чистит `narration.vosk_clean`. Модель грузится ~45 с, синтез минуты речи ~25 с на 4 ядрах.
 - **Gemini TTS** (`gemini-3.8-flash-tts`, Interactions API `POST /v1beta/interactions`, запасной путь — старый
   `generateContent`): вся история одним запросом (`narration.gemini_script`: сцены через `<short/long pause>`,
   манера — `speech_metadata.style`). Ответ — WAV 24 кГц base64.

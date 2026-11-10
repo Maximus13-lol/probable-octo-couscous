@@ -6,14 +6,14 @@ on:
       provider:
         description: "Сервис озвучки"
         type: choice
-        options: [gemini, azure]
-        default: gemini
+        options: [vosk, gemini, azure]
+        default: vosk
       text:
         description: "Фраза для озвучки (пусто = тестовая)"
         type: string
         required: false
       all_voices:
-        description: "Gemini: все 30 голосов (иначе подборка из 8; тратит бесплатный лимит)"
+        description: "Только для gemini: все 30 голосов (иначе подборка из 8; тратит бесплатный лимит)"
         type: boolean
         default: false
       stress_test:
@@ -40,7 +40,8 @@ jobs:
           path: |
             .cache/ruaccent
             .cache/whisper
-          key: models-ruaccent-1.5.8.3-whisper-small-v1
+            ~/.cache/vosk
+          key: models-ruaccent-1.5.8.3-whisper-small-vosk-0.9-v2
       - name: Озвучка
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}

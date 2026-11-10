@@ -1,5 +1,7 @@
 """Озвучка. Провайдеры (config/voice.json → provider):
 
+* vosk — Vosk TTS (Apache 2.0), работает локально в GitHub Actions: без регистрации, ключей и лимитов.
+  Ударения «+» из RUAccent, паузы и темп по фрагментам от narration-director; тайминги — faster-whisper.
 * gemini — Gemini TTS (ключ GEMINI_API_KEY, бесплатный тариф). Вся история — одним запросом (ровный голос,
   экономия лимита), тайминги слов — faster-whisper (src/align.py), затем нарезка по сценам.
 * azure — Azure AI Speech (AZURE_SPEECH_KEY, AZURE_SPEECH_REGION), SSML, тайминги из WordBoundary.
@@ -347,6 +349,73 @@ def _synth_gemini(narr: list[dict], adir: Path) -> list[dict]:
     return result
 
 
+# ------------------------------------------------------------------ Vosk TTS (локально)
+_VOSK = None
+
+
+def vosk_available() -> bool:
+    import importlib.util
+    return importlib.util.find_spec("vosk_tts") is not None
+
+
+def _vosk_synth():
+    global _VOSK  # noqa: PLW0603
+    if _VOSK is None:
+        from vosk_tts import Model, Synth
+        cfg = voice_config().get("vosk", {})
+        name = cfg.get("model", "vosk-model-tts-ru-0.9-multi")
+        log.info("Загружаю Vosk TTS (%s)…", name)
+        _VOSK = Synth(Model(model_name=name))
+    return _VOSK
+
+
+def _silence(sec: float, rate: int):
+    import numpy as np
+    return np.zeros(int(sec * rate), dtype=np.int16)
+
+
+def _synth_vosk(narr: list[dict], adir: Path) -> list[dict]:
+    import numpy as np
+    cfg = voice_config().get("vosk", {})
+    speaker = int(env("VOSK_SPEAKER", str(cfg.get("speaker", 3))))
+    base_rate = float(cfg.get("speech_rate", 1.0))
+    synth = _vosk_synth()
+    sr = int(synth.model.config["audio"].get("sample_rate", 22050))
+    result = []
+    for sc in narr:
+        chunks = [_silence(0.05, sr)]
+        for seg in sc.get("vosk_segments") or []:
+            rate = base_rate * (1 + seg.get("rate", 0) / 100)
+            audio = synth.synth_audio(seg["text"], speaker_id=speaker, speech_rate=rate)
+            audio = np.asarray(audio)
+            if audio.dtype != np.int16:
+                audio = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
+            chunks.append(audio)
+            if seg.get("pause_after_ms"):
+                chunks.append(_silence(seg["pause_after_ms"] / 1000, sr))
+        chunks.append(_silence(0.05, sr))
+        wav_path = adir / f"scene_{sc['index']:02d}.wav"
+        with wave.open(str(wav_path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes(np.concatenate(chunks).tobytes())
+        path = adir / f"scene_{sc['index']:02d}.mp3"
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav_path), "-c:a", "libmp3lame",
+                        "-b:a", "128k", str(path)], check=True)
+        dur = audio_duration(path)
+        words = align.WORD_RE.findall(sc["display_text"])
+        timed, matched = align.align_script(words, str(wav_path), dur)
+        if matched < 0.6:
+            log.warning("Сцена %d: распознано лишь %.0f%% слов — проверьте озвучку", sc["index"], matched * 100)
+        result.append({"index": sc["index"], "path": str(path), "duration": dur, "words": timed,
+                       "voice": f"vosk:{speaker}", "alignment": round(matched, 3),
+                       "pause_after": sc.get("pause_after_ms", 200) / 1000})
+        log.info("Озвучка сцены %d: %.2f с (Vosk, голос %d, слов узнано %.0f%%)",
+                 sc["index"], dur, speaker, matched * 100)
+    return result
+
+
 # ------------------------------------------------------------------ Azure (по сценам)
 def _synth_azure(narr: list[dict], adir: Path) -> list[dict]:
     cfg = voice_config()
@@ -378,9 +447,10 @@ def _synth_azure(narr: list[dict], adir: Path) -> list[dict]:
 
 # ------------------------------------------------------------------ шаг конвейера
 def providers() -> list[str]:
-    pref = voice_config().get("provider", "auto")
-    order = {"gemini": ["gemini", "azure"], "azure": ["azure", "gemini"]}.get(pref, ["azure", "gemini"])
-    ok = {"azure": azure_available(), "gemini": gemini_available()}
+    pref = voice_config().get("provider", "vosk")
+    order = {"vosk": ["vosk", "gemini", "azure"], "gemini": ["gemini", "vosk", "azure"],
+             "azure": ["azure", "vosk", "gemini"]}.get(pref, ["vosk", "azure", "gemini"])
+    ok = {"azure": azure_available(), "gemini": gemini_available(), "vosk": vosk_available()}
     return [p for p in order if ok[p]]
 
 
@@ -399,7 +469,8 @@ def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False) -> l
     for prov in provs:
         try:
             log.info("Озвучка: %s", prov)
-            result = _synth_gemini(narr, adir) if prov == "gemini" else _synth_azure(narr, adir)
+            fn = {"gemini": _synth_gemini, "azure": _synth_azure, "vosk": _synth_vosk}[prov]
+            result = fn(narr, adir)
             save_json(run_dir / "tts.json", result)
             return result
         except Exception as exc:  # noqa: BLE001

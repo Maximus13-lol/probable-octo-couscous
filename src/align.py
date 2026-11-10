@@ -43,7 +43,9 @@ def _load_audio(path: str):
 def transcribe_words(audio_path: str, prompt: str = "") -> list[dict]:
     segments, _info = _model().transcribe(
         _load_audio(audio_path), language="ru", word_timestamps=True, beam_size=5, vad_filter=False,
-        initial_prompt=prompt[:800] or None, condition_on_previous_text=True,
+        # initial_prompt НЕ передаём: если подсказка совпадает с речью, whisper на коротких фрагментах
+        # «галлюцинирует» титрами («Редактор субтитров …») — проверено на практике.
+        initial_prompt=prompt[:800] or None, condition_on_previous_text=False,
     )
     words = []
     for seg in segments:
@@ -55,7 +57,7 @@ def transcribe_words(audio_path: str, prompt: str = "") -> list[dict]:
 
 def align_script(script_words: list[str], audio_path: str, total_dur: float) -> tuple[list[dict], float]:
     """Возвращает тайминги для КАЖДОГО слова сценария и долю слов, найденных в распознавании (0..1)."""
-    rec = transcribe_words(audio_path, prompt=" ".join(script_words))
+    rec = transcribe_words(audio_path)
     a = [_n(w) for w in script_words]
     b = [_n(w["word"]) for w in rec]
     times: list[tuple[float, float] | None] = [None] * len(a)

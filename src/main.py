@@ -62,7 +62,7 @@ def run(args) -> int:
         save_json(run_dir / "storyboard.json", board)  # + полные промпты
         done("images", t)
 
-        t = step(6, "озвучка (Gemini TTS / Azure)")
+        t = step(6, "озвучка (Vosk / Gemini TTS / Azure)")
         voice = tts.synthesize(narr, run_dir, allow_silent=args.no_upload)
         done("tts", t)
 

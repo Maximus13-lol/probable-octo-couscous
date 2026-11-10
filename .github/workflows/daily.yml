@@ -52,13 +52,14 @@ jobs:
       - name: Python-зависимости
         run: pip install -r requirements.txt
 
-      - name: Кэш моделей RUAccent и faster-whisper (скачиваются с Hugging Face один раз)
+      - name: Кэш моделей RUAccent, faster-whisper и Vosk (скачиваются один раз)
         uses: actions/cache@v4
         with:
           path: |
             .cache/ruaccent
             .cache/whisper
-          key: models-ruaccent-1.5.8.3-whisper-small-v1
+            ~/.cache/vosk
+          key: models-ruaccent-1.5.8.3-whisper-small-vosk-0.9-v2
 
       - name: Конвейер
         env:

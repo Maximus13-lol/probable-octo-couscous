@@ -1,6 +1,12 @@
 {
-  "provider": "auto",
-  "_provider_comment": "auto — Azure, если заданы AZURE_SPEECH_KEY/REGION, иначе Gemini TTS; второй — запасной. Можно явно: gemini | azure",
+  "provider": "vosk",
+  "_provider_comment": "vosk — локальный Vosk TTS (бесплатно, без ключей); gemini — Gemini TTS; azure — Azure Speech. Остальные — запасные, если для них есть ключи.",
+  "vosk": {
+    "model": "vosk-model-tts-ru-0.9-multi",
+    "speaker": 3,
+    "_speaker_comment": "0–4: голоса Vosk (3 женских, 2 мужских). Выбран 3.",
+    "speech_rate": 1.1
+  },
   "gemini": {
     "voice": "Charon",
     "models": [
