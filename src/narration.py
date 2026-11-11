@@ -216,39 +216,118 @@ def render(text: str, words: list[WordInfo], start: int, end: int, kind: str) ->
     return "".join(out)
 
 
-def gemini_resolve_homographs(items: list[tuple[str, WordInfo]], stresser: Stresser) -> int:
-    """Gemini выбирает ударение омографа по контексту из вариантов RUAccent. Возвращает число исправлений."""
-    todo = [(ctx, w) for ctx, w in items if len(w.options) > 1]
+def _idx_from_acc(acc: str) -> int | None:
+    """«зам+ок» → индекс ударной буквы в слове без «+»."""
+    return acc.index("+") if "+" in acc else None
+
+
+def _idx_from_speak(speak: str) -> int | None:
+    """«замо́к» (U+0301) → индекс ударной буквы."""
+    k = speak.find(ACUTE)
+    return k - 1 if k > 0 else None
+
+
+def _upper_form(word: str, idx: int) -> str:
+    w = word.lower()
+    return w[:idx] + w[idx].upper() + w[idx + 1:] if 0 <= idx < len(w) else w
+
+
+def vosk_dictionary_choices(words: set[str]) -> dict[str, int | None]:
+    """Ударение по словарю Vosk (вариант с наибольшей вероятностью). None — словаря нет или варианты равны."""
+    from pathlib import Path as _P
+    name = voice_config().get("vosk", {}).get("model", "vosk-model-tts-ru-0.9-multi")
+    path = _P(env("VOSK_DICTIONARY", str(_P.home() / ".cache" / "vosk" / name / "dictionary")))
+    if not path.exists() or not words:
+        return {}
+    variants: dict[str, list[tuple[float, int]]] = {}
+    with open(path, encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            head = line.split(" ", 1)[0]
+            if head not in words:
+                continue
+            parts = line.split()
+            try:
+                prob = float(parts[1])
+            except (IndexError, ValueError):
+                continue
+            vowel_phones = [p for p in parts[2:] if p[:1] in "aoeuiy" and p[-1:].isdigit()]
+            k = next((n for n, p in enumerate(vowel_phones) if p.endswith("1")), None)
+            if k is None:
+                continue
+            letters = [n for n, ch in enumerate(head) if ch in VOWELS]
+            if k < len(letters):
+                variants.setdefault(head, []).append((prob, letters[k]))
+    out: dict[str, int | None] = {}
+    for w, vs in variants.items():
+        vs.sort(reverse=True)
+        out[w] = vs[0][1] if len(vs) == 1 or vs[0][0] > vs[1][0] else None
+    return out
+
+
+def gemini_homograph_choices(todo: list[tuple[str, WordInfo]]) -> list[int | None] | None:
+    """Gemini выбирает ударение по смыслу. Отвечает самим словом с заглавной ударной буквой («годУ»):
+    так ошибиться сложнее, чем с номером варианта."""
     if not todo or not gemini.available():
-        return 0
-    lines = []
-    for i, (ctx, w) in enumerate(todo):
-        lines.append(f"{i}. Предложение: «{ctx}». Слово: «{w.display}». Варианты: "
-                     + ", ".join(f"{k}) {o}" for k, o in enumerate(w.options)))
-    prompt = ("Ты корректор русской речи для диктора. Для каждого слова выбери правильное ударение по смыслу "
-              "предложения («+» стоит перед ударной гласной).\n" + "\n".join(lines)
-              + '\nВерни JSON: {"choices": [номер варианта для 0, для 1, ...]}')
+        return None
+    import random
+    forms = [[_upper_form(_strip_marks(w.display), _idx_from_acc(o)) for o in w.options] for _, w in todo]
+    for fs in forms:  # случайный порядок — против привычки модели выбирать первый вариант
+        random.shuffle(fs)
+    lines = [f"{i}. Предложение: «{ctx}». Слово «{w.display}» — варианты: {', '.join(fs)}"
+             for i, ((ctx, w), fs) in enumerate(zip(todo, forms))]
+    prompt = ("Ты корректор русской речи для диктора. Для каждого слова определи, как оно произносится "
+              "в этом предложении: учитывай падеж, число, часть речи и смысл. Заглавная буква в варианте — "
+              "ударная гласная. Ответь одним из предложенных вариантов, написанным точно так же.\n"
+              + "\n".join(lines) + '\nВерни JSON: {"answers": ["вариант для 0", "вариант для 1", ...]}')
 
     def validate(obj):
-        ch = obj.get("choices") if isinstance(obj, dict) else None
-        if not isinstance(ch, list) or len(ch) != len(todo):
-            return f"нужен список choices из {len(todo)} чисел"
-        if any(not isinstance(c, int) or not 0 <= c < len(w.options) for c, (_, w) in zip(ch, todo)):
-            return "номер варианта вне диапазона"
-        return None
+        ans = obj.get("answers") if isinstance(obj, dict) else None
+        if not isinstance(ans, list) or len(ans) != len(todo):
+            return f"нужен список answers из {len(todo)} вариантов"
+        bad = [a for a, fs in zip(ans, forms) if a not in fs]
+        return f"ответы должны быть точно из вариантов: {bad[:3]}" if bad else None
 
     try:
         res = gemini.generate_json(prompt, temperature=0.0, validate=validate, attempts=2)
     except Exception as exc:  # noqa: BLE001
-        log.warning("Gemini не проверил омографы (%s) — оставляю выбор RUAccent", exc)
-        return 0
-    changed = 0
-    for c, (_, w) in zip(res["choices"], todo):
-        new = stresser.make_word(w.start, w.end, _strip_marks(w.display), w.options[c], "gemini")
-        if new.speak != w.speak:
-            changed += 1
-        w.display, w.speak, w.stressed, w.source = new.display, new.speak, new.stressed, "gemini"
-    return changed
+        log.warning("Gemini не проверил омографы (%s)", exc)
+        return None
+    positions = [fs.index(a) for a, fs in zip(res["answers"], forms)]
+    if len(positions) >= 6 and len(set(positions)) == 1:  # при случайном порядке это почти наверняка «лень»
+        log.warning("Gemini выбрал вариант на одной и той же позиции во всех %d словах — ответы не учитываю",
+                    len(positions))
+        return None
+    return [next((n for n, ch in enumerate(a) if ch.isupper()), None) for a in res["answers"]]
+
+
+def resolve_homographs(items: list[tuple[str, WordInfo]], stresser: Stresser) -> list[dict]:
+    """Ударение многозначных слов голосованием трёх источников: RUAccent (контекст), Gemini (контекст),
+    словарь Vosk (частотность). Решает большинство; при ничьей — RUAccent. Если вариантов нет ни у кого —
+    метки нет и синтезатор читает слово по своему словарю. Возвращает протокол решений (для артефактов)."""
+    todo = [(ctx, w) for ctx, w in items if len(w.options) > 1]
+    if not todo:
+        return []
+    ge = gemini_homograph_choices(todo) or [None] * len(todo)
+    vk_map = vosk_dictionary_choices({_strip_marks(w.display).lower().replace("ё", "е") for _, w in todo}
+                                     | {_strip_marks(w.display).lower() for _, w in todo})
+    report = []
+    for (ctx, w), g_idx in zip(todo, ge):
+        base = _strip_marks(w.display)
+        ru_idx = _idx_from_speak(w.speak)
+        vk_idx = vk_map.get(base.lower(), vk_map.get(base.lower().replace("ё", "е")))
+        votes = [v for v in (ru_idx, g_idx, vk_idx) if v is not None]
+        # большинство из двух; при ничьей — RUAccent (специализированная модель, учитывает контекст)
+        chosen = next((v for v in set(votes) if votes.count(v) >= 2), ru_idx)
+        if chosen is None:
+            w.speak, w.stressed, w.source = w.display, False, "vosk-default"
+        else:
+            acc = base[:chosen] + "+" + base[chosen:]
+            new = stresser.make_word(w.start, w.end, base, acc, "vote")
+            w.display, w.speak, w.stressed, w.source = new.display, new.speak, new.stressed, "vote"
+        fmt = (lambda i: _upper_form(base, i) if i is not None else "—")
+        report.append({"context": ctx, "word": base, "ruaccent": fmt(ru_idx), "gemini": fmt(g_idx),
+                       "vosk_dictionary": fmt(vk_idx), "final": fmt(chosen) if chosen is not None else "без метки"})
+    return report
 
 
 def _strip_marks(s: str) -> str:
@@ -655,9 +734,10 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
                 sent = next((m.group() for m in re.finditer(r"[^.!?…]+[.!?…]*", sc["text"])
                              if m.start() <= w.start < m.end()), sc["text"])
                 items.append((sent.strip(), w))
-    fixed = gemini_resolve_homographs(items, stresser)
-    if fixed:
-        log.info("Gemini исправил ударения в %d омографах", fixed)
+    homograph_report = resolve_homographs(items, stresser)
+    for r in homograph_report:
+        log.info("Ударение «%s»: RUAccent %s, Gemini %s, словарь Vosk %s → %s",
+                 r["word"], r["ruaccent"], r["gemini"], r["vosk_dictionary"], r["final"])
     for sc, plan, words in zip(scenes, plans, all_words):
         text = sc["text"]
         segs = build_segments(text, plan, cfg)
@@ -700,6 +780,7 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
     (out_dir / "vosk_script.txt").write_text("\n".join(lines), encoding="utf-8")
     (out_dir / "gemini_tts_script.txt").write_text(
         f"STYLE: {tts_style}\n\n" + gemini_script(result), encoding="utf-8")
+    save_json(run_dir / "homographs.json", homograph_report)
     save_json(run_dir / "narration.json", {"voice": voice, "style": style, "tts_style": tts_style,
                                            "director": director, "scenes": result})
     log.info("Режиссура: %s, голос %s, стиль %s; ударения: %s", director, voice, style or "—",
