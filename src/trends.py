@@ -92,6 +92,12 @@ def _quota_spend(n: int) -> None:
     save_json(QUOTA_FILE, q)
 
 
+def _rotated_queries() -> list[tuple[str, str]]:
+    """Каждый запуск начинает с другого запроса — за день покрываются все темы поиска."""
+    k = (dt.datetime.now(dt.timezone.utc).hour // 4) % len(YT_QUERIES)
+    return YT_QUERIES[k:] + YT_QUERIES[:k]
+
+
 def fetch_youtube() -> list[dict]:
     from .upload import get_youtube_client  # локальный импорт: googleapiclient тяжёлый
 
@@ -106,7 +112,8 @@ def fetch_youtube() -> list[dict]:
     after = (dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7)).strftime("%Y-%m-%dT%H:%M:%SZ")
     ids: dict[str, str] = {}
     calls = 0
-    for q, lang in YT_QUERIES[:left]:
+    per_run = int(env("YT_QUERIES_PER_RUN", "3"))  # 3 ролика в день × 3 запроса ≈ дневной лимит 10
+    for q, lang in _rotated_queries()[:min(left, per_run)]:
         try:
             resp = retry(tries=3, label="yt.search")(
                 lambda: yt.search().list(
