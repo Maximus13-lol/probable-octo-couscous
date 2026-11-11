@@ -2,16 +2,15 @@ name: Daily YouTube Short
 
 on:
   schedule:
-    # Два ролика в день. GitHub не гарантирует запуск по cron (в нагрузку запуски пропадают),
-    # поэтому у каждого слота есть резервные запуски; страж (src/schedule_guard.py) пропускает лишние.
-    - cron: "23 7 * * *"    # 10:23 МСК — ролик №1
-    - cron: "53 8 * * *"    # 11:53 МСК — резерв №1
-    - cron: "23 10 * * *"   # 13:23 МСК — резерв №1
-    - cron: "13 12 * * *"   # 15:13 МСК — резерв №1
-    - cron: "47 15 * * *"   # 18:47 МСК — ролик №2
-    - cron: "17 17 * * *"   # 20:17 МСК — резерв №2
-    - cron: "47 18 * * *"   # 21:47 МСК — резерв №2
-    - cron: "37 20 * * *"   # 23:37 МСК — резерв №2
+    # Слоты выхода (МСК) — config/schedule.json; сборка стартует ~за 1 ч 40 мин, ролик выходит ровно в слот
+    # (отложенная публикация YouTube). Встроенный cron GitHub здесь не срабатывал — основной запуск делает
+    # внешний будильник (workflow_dispatch scheduled=true); эти cron оставлены про запас.
+    - cron: "20 6 * * *"    # 09:20 МСК → слот 11:00
+    - cron: "20 7 * * *"    # 10:20 МСК — резерв
+    - cron: "20 10 * * *"   # 13:20 МСК → слот 15:00
+    - cron: "20 11 * * *"   # 14:20 МСК — резерв
+    - cron: "20 14 * * *"   # 17:20 МСК → слот 19:00
+    - cron: "20 15 * * *"   # 18:20 МСК — резерв
   workflow_dispatch:
     inputs:
       no_upload:
@@ -102,6 +101,8 @@ jobs:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
           POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
           TOPIC: ${{ inputs.topic }}
+          SLOT: ${{ steps.guard.outputs.slot }}
+          PUBLISH_AT: ${{ steps.guard.outputs.publish_at }}
         run: |
           ARGS=""
           if [ "$PUBLISH" != "true" ]; then ARGS="$ARGS --no-upload"; fi

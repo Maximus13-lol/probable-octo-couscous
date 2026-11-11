@@ -100,6 +100,10 @@ def _body(meta: dict, with_optional: bool) -> tuple[dict, str]:
             "embeddable": True,
         },
     }
+    if meta.get("publish_at"):
+        # отложенная публикация: YouTube требует privacyStatus=private, в publishAt видео станет публичным
+        body["status"]["privacyStatus"] = "private"
+        body["status"]["publishAt"] = meta["publish_at"]
     parts = ["snippet", "status"]
     if with_optional:
         body["status"]["containsSyntheticMedia"] = meta["contains_synthetic_media"]
@@ -161,7 +165,10 @@ def upload(video: Path, meta: dict, run_dir: Path) -> dict:
     }
     save_json(run_dir / "upload_result.json", result)
     log.info("Опубликовано: %s (%s)", result["url"], result["privacy"])
-    if result["privacy"] != meta["privacy_status"]:
+    result["publish_at"] = response.get("status", {}).get("publishAt") or meta.get("publish_at")
+    if meta.get("publish_at"):
+        log.info("Ролик запланирован: станет публичным в %s (UTC)", result["publish_at"])
+    elif result["privacy"] != meta["privacy_status"]:
         log.warning("YouTube выставил статус %s вместо %s — проверьте настройки доступа по умолчанию "
                     "в YouTube Studio (Настройки → Загрузка видео).", result["privacy"], meta["privacy_status"])
     return result
