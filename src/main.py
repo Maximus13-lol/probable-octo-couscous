@@ -16,7 +16,8 @@ import sys
 import time
 import traceback
 
-from . import ads, assemble, images, narration, story, storyboard, trends, tts, upload
+from . import ads, assemble, images, narration, story, storyboard, trends, tts, uniqueness, upload
+from .gemini import available as gemini_ok
 from .utils import OUTPUT_DIR, load_json, log, save_json, setup_logging
 
 
@@ -35,12 +36,29 @@ def run(args) -> int:
         summary["steps"][name] = round(time.time() - t0, 1)
 
     try:
-        t = step(1, "trend-scout")
-        choice = trends.scout(run_dir, forced_topic=args.topic)
-        done("trend-scout", t)
+        # trend-scout + story-writer с проверкой уникальности: если история вышла похожей на прошлую —
+        # тема отклоняется и выбирается другая (до 3 раз)
+        rejected: list[str] = []
+        for attempt in range(1, 4):
+            t = step(1, "trend-scout" + (f" (попытка {attempt})" if attempt > 1 else ""))
+            choice = trends.scout(run_dir, forced_topic=args.topic, exclude=rejected)
+            done("trend-scout", t)
 
-        t = step(2, "story-writer")
-        st = story.write_story(choice, run_dir)
+            t = step(2, "story-writer")
+            st = story.write_story(choice, run_dir)
+            done("story-writer", t)
+            sim = uniqueness.similar_story(st["story"], trends.load_used_topics())
+            if not sim or args.topic or not gemini_ok():
+                break
+            past, score = sim
+            log.warning("История похожа на прошлую «%s» (сходство %.2f) — выбираю другую тему",
+                        past.get("title") or past.get("topic"), score)
+            rejected.append(choice["topic"])
+        else:
+            raise RuntimeError("Не удалось получить непохожую историю за 3 попытки")
+        summary["uniqueness"] = {"rejected_in_run": rejected}
+
+        t = time.time()
         if args.no_upload and not args.mark_used:
             log.info("--no-upload: тема НЕ записывается в used_topics.json (добавьте --mark-used, чтобы записать)")
         else:

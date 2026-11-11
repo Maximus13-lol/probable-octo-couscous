@@ -2,8 +2,9 @@ name: Daily YouTube Short
 
 on:
   schedule:
-    # 07:23 UTC = 10:23 МСК. Минута не «круглая», чтобы не попадать в пик очереди GitHub.
-    - cron: "23 7 * * *"
+    # Два ролика в день. Минуты не «круглые», чтобы не попадать в пик очереди GitHub.
+    - cron: "23 7 * * *"    # 10:23 МСК
+    - cron: "47 15 * * *"   # 18:47 МСК
   workflow_dispatch:
     inputs:
       no_upload:
@@ -29,7 +30,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 110
     env:
       PYTHONUNBUFFERED: "1"
       PUBLISH: ${{ github.event_name == 'schedule' || (inputs.no_upload == false && inputs.test_ad == false) }}
@@ -77,11 +78,11 @@ jobs:
           ARGS=""
           if [ "$PUBLISH" != "true" ]; then ARGS="$ARGS --no-upload"; fi
           if [ "${{ inputs.test_ad }}" = "true" ]; then ARGS="$ARGS --test-ad"; fi
-          if [ -n "$TOPIC" ]; then
-            python -m src.main $ARGS --topic "$TOPIC"
-          else
-            python -m src.main $ARGS
-          fi
+          run() {
+            if [ -n "$TOPIC" ]; then python -m src.main $ARGS --topic "$TOPIC"; else python -m src.main $ARGS; fi
+          }
+          # Если сервисы временно перегружены (Gemini, Pollinations) — одна повторная попытка через 10 минут
+          run || { echo "::warning::Первая попытка не удалась — повтор через 10 минут"; sleep 600; run; }
 
       - name: Артефакт — готовое видео и файлы запуска
         if: always()

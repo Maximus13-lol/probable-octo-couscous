@@ -3,16 +3,26 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 import requests
 
 from .utils import env, log, retry
 
 API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-DEFAULT_MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.0-flash"]
+LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+# Запасной список, если получить перечень моделей не удалось. Google регулярно отключает старые модели
+# (так, gemini-2.5-flash к ноябрю 2026 уже отвечает 404), поэтому основной путь — спросить у API.
+FALLBACK_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"]
+_DISCOVERED: list[str] | None = None
+_DEAD: set[str] = set()
 
 
 class GeminiError(RuntimeError):
+    pass
+
+
+class ModelNotFound(Exception):
     pass
 
 
@@ -20,12 +30,62 @@ def available() -> bool:
     return bool(env("GEMINI_API_KEY"))
 
 
+def _rank(name: str) -> tuple | None:
+    """Ключ сортировки текстовых flash-моделей: стабильные новые выше, затем lite, затем preview."""
+    n = name.split("/")[-1]
+    if not n.startswith("gemini") or any(x in n for x in ("tts", "image", "live", "audio", "embedding",
+                                                           "vision", "thinking", "robotics", "computer", "native")):
+        return None
+    if "flash" not in n:
+        return None
+    m = re.search(r"gemini-(\d+(?:\.\d+)?)", n)
+    ver = float(m.group(1)) if m else (99.0 if "latest" in n else 0.0)
+    lite = "lite" in n
+    preview = "preview" in n or "exp" in n
+    return (preview, lite, -ver, len(n))
+
+
+def order_models(names: list[str]) -> list[str]:
+    """Новейшая стабильная flash → её lite → алиасы latest → прочие стабильные → preview. Не больше 6."""
+    ok = [n for n in names if _rank(n)]
+    concrete = sorted((n for n in ok if "latest" not in n and "preview" not in n and "exp" not in n), key=_rank)
+    flash = [n for n in concrete if "lite" not in n]
+    lite = [n for n in concrete if "lite" in n]
+    aliases = [n for n in ("gemini-flash-latest", "gemini-flash-lite-latest") if n in ok]
+    preview = sorted((n for n in ok if "preview" in n or "exp" in n), key=_rank)
+    out: list[str] = []
+    for n in flash[:1] + lite[:1] + aliases + flash[1:2] + lite[1:2] + preview[:1]:
+        if n not in out:
+            out.append(n)
+    return out[:6]
+
+
+def discover_models() -> list[str]:
+    global _DISCOVERED  # noqa: PLW0603
+    if _DISCOVERED is not None:
+        return _DISCOVERED
+    try:
+        r = requests.get(LIST_URL, params={"key": env("GEMINI_API_KEY"), "pageSize": 1000}, timeout=30)
+        r.raise_for_status()
+        names = [m["name"].split("/")[-1] for m in r.json().get("models", [])
+                 if "generateContent" in (m.get("supportedGenerationMethods") or [])]
+        _DISCOVERED = order_models(names) or list(FALLBACK_MODELS)
+        log.info("Gemini: доступные модели по приоритету: %s", ", ".join(_DISCOVERED))
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Не удалось получить список моделей Gemini (%s) — запасной список", exc)
+        _DISCOVERED = list(FALLBACK_MODELS)
+    return _DISCOVERED
+
+
 def _models() -> list[str]:
     custom = env("GEMINI_MODEL")
-    return [custom] + [m for m in DEFAULT_MODELS if m != custom] if custom else list(DEFAULT_MODELS)
+    models = discover_models()
+    if custom:
+        models = [custom] + [m for m in models if m != custom]
+    return [m for m in models if m not in _DEAD]
 
 
-@retry(tries=4, base_delay=4, exceptions=(requests.RequestException, GeminiError), label="gemini")
+@retry(tries=2, base_delay=5, exceptions=(requests.RequestException, GeminiError), label="gemini")
 def _call(model: str, prompt: str, temperature: float, as_json: bool) -> str:
     key = env("GEMINI_API_KEY")
     if not key:
@@ -36,36 +96,40 @@ def _call(model: str, prompt: str, temperature: float, as_json: bool) -> str:
     }
     if as_json:
         body["generationConfig"]["responseMimeType"] = "application/json"
-    resp = requests.post(API_URL.format(model=model), params={"key": key}, json=body, timeout=120)
+    resp = requests.post(API_URL.format(model=model), params={"key": key}, json=body, timeout=(15, 150))
     if resp.status_code == 404:
-        # модели нет — пусть верхний уровень попробует следующую, без повторов
         raise ModelNotFound(model)
     if resp.status_code in (429, 500, 502, 503, 504):
-        raise GeminiError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+        raise GeminiError(f"HTTP {resp.status_code}: {resp.text[:200]}")
     if resp.status_code != 200:
         raise ModelNotFound(f"{model}: HTTP {resp.status_code}: {resp.text[:300]}")
     data = resp.json()
     try:
         parts = data["candidates"][0]["content"]["parts"]
-        return "".join(p.get("text", "") for p in parts).strip()
+        return "".join(p.get("text", "") for p in parts if not p.get("thought")).strip()
     except (KeyError, IndexError) as exc:
         raise GeminiError(f"Пустой ответ Gemini: {json.dumps(data)[:300]}") from exc
 
 
-class ModelNotFound(Exception):
-    pass
-
-
 def generate(prompt: str, temperature: float = 0.9, as_json: bool = False) -> str:
+    """Пробует модели по очереди: 404 — модель помечается мёртвой; перегрузка/таймаут после 2 попыток —
+    переход к следующей модели (обычно облегчённой и менее загруженной)."""
     last: Exception | None = None
-    for model in _models():
-        try:
-            text = _call(model, prompt, temperature, as_json)
-            log.debug("Gemini %s ответил %d символов", model, len(text))
-            return text
-        except ModelNotFound as exc:
-            log.warning("Gemini: модель недоступна (%s), пробую следующую", exc)
-            last = exc
+    for _round in range(2):
+        for model in _models():
+            try:
+                text = _call(model, prompt, temperature, as_json)
+                log.debug("Gemini %s ответил %d символов", model, len(text))
+                return text
+            except ModelNotFound as exc:
+                log.warning("Gemini: модель %s недоступна — исключаю", exc)
+                _DEAD.add(model)
+                last = exc
+            except (requests.RequestException, GeminiError) as exc:
+                log.warning("Gemini %s перегружен или не ответил (%s) — пробую следующую модель", model, str(exc)[:120])
+                last = exc
+        if _round == 0:
+            time.sleep(30)
     raise GeminiError(f"Ни одна модель Gemini не ответила: {last}")
 
 
