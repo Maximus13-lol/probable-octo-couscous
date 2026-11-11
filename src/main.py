@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import os
 import shutil
 import sys
 import time
 import traceback
+from zoneinfo import ZoneInfo
 
 from . import ads, assemble, cta, images, narration, story, storyboard, trends, tts, uniqueness, upload
 from .gemini import available as gemini_ok
@@ -106,6 +108,7 @@ def run(args) -> int:
         if args.no_upload or args.test_ad:
             log.info("Загрузка пропущена (%s). Видео: %s", "--test-ad" if args.test_ad else "--no-upload", final)
         else:
+            meta["publish_at"] = os.environ.get("PUBLISH_AT") or None
             res = upload.upload(final, meta, run_dir)
             summary["upload"] = res
             upload.append_publish_log({
@@ -113,6 +116,8 @@ def run(args) -> int:
                 "url": res["url"], "title": meta["title"], "topic": choice["topic"],
                 "source": choice.get("source"), "privacy": res["privacy"],
                 "ad_campaign": ad_info["campaign"] if ad_info else None,
+                "slot": os.environ.get("SLOT") or None, "publish_at": res.get("publish_at"),
+                "slot_date": dt.datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat(),
             })
             if ad_info:
                 ads.log_impression(ad_info, res["url"], meta["title"])
