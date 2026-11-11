@@ -65,26 +65,37 @@ jobs:
           pip install -q google-api-python-client google-auth requests
           python -m src.schedule_guard
 
-      - name: Системные пакеты (FFmpeg, шрифты)
+      - name: Кэш FFmpeg
         if: steps.guard.outputs.run == 'true'
-        timeout-minutes: 12
+        uses: actions/cache@v4
+        with:
+          path: ~/ffmpeg-static
+          key: ffmpeg-static-btbn-v1
+
+      - name: FFmpeg (статическая сборка, без apt)
+        if: steps.guard.outputs.run == 'true'
+        timeout-minutes: 10
         run: |
-          # Зеркала Ubuntu иногда «висят» (11.11.2026 шаг завис на 30+ минут) — таймауты и повторы
-          APT="sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -y -qq"
-          need=""
-          command -v ffmpeg >/dev/null || need="$need ffmpeg"
-          fc-list | grep -qi "DejaVuSans-Bold" || need="$need fonts-dejavu-core"
-          if [ -n "$need" ]; then
-            for i in 1 2 3; do
-              timeout 240 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update -qq && \
-              timeout 240 $APT install $need && break
-              echo "::warning::apt попытка $i не удалась, повтор"; sleep 10
-            done
-            command -v ffmpeg >/dev/null || { echo "::error::ffmpeg не установился"; exit 1; }
+          # apt-зеркала на раннерах GitHub 11.11.2026 зависали на 30+ минут — ставим FFmpeg без apt.
+          # Шрифт DejaVu Sans Bold лежит в assets/fonts, установка шрифтов не нужна.
+          D="$HOME/ffmpeg-static"
+          if [ ! -x "$D/ffmpeg" ] || [ ! -x "$D/ffprobe" ]; then
+            mkdir -p "$D" && cd "$D"
+            curl -fsSL --retry 3 --max-time 240 -o f.tar.xz \
+              https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz \
+              && tar -xJf f.tar.xz --wildcards --strip-components=2 '*/bin/ffmpeg' '*/bin/ffprobe' \
+              || { curl -fsSL --retry 3 --max-time 240 -o f.tar.xz https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
+                   && tar -xJf f.tar.xz --wildcards --strip-components=1 '*/ffmpeg' '*/ffprobe'; } \
+              || true
+            rm -f f.tar.xz
           fi
-          # необязательное — не должно останавливать сборку
-          timeout 120 $APT install fonts-montserrat || echo "Montserrat недоступен — будет DejaVu Sans Bold"
-          timeout 120 $APT install libasound2t64 || timeout 120 $APT install libasound2 || echo "libasound2 не установлен (нужен только для Azure)"
+          if [ -x "$D/ffmpeg" ]; then
+            echo "$D" >> "$GITHUB_PATH"; "$D/ffmpeg" -hide_banner -version | head -1
+          elif ! command -v ffmpeg >/dev/null; then
+            echo "::warning::статическая сборка недоступна — пробую apt"
+            timeout 300 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update -qq && \
+            timeout 300 sudo apt-get -y -qq install ffmpeg
+          fi
 
       - name: Python-зависимости
         if: steps.guard.outputs.run == 'true'
