@@ -146,7 +146,9 @@ def render_overlay(t: float, cfg: dict | None = None) -> Image.Image:
             else:
                 _text(d, LIKE_C, "♥", int(r * 1.2), (255, 60, 80, 255), stroke=0)
             lbl_a = _clamp01((t - 0.45) / 0.25)
-            _text(d, (LIKE_C[0], LIKE_C[1] + LIKE_R + 48), cfg["like_label"], 46, (255, 255, 255, int(255 * lbl_a)), stroke=6)
+            if lbl_a > 0:
+                _text(d, (LIKE_C[0], LIKE_C[1] + LIKE_R + 48), cfg["like_label"], 46,
+                      (255, 255, 255, int(255 * lbl_a)), stroke=6)
 
     # кнопка подписки
     slide = _ease_out((t - 0.5) / 0.4)
