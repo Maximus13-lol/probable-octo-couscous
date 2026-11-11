@@ -19,6 +19,26 @@ def count_words(text: str) -> int:
     return len(WORD_RE.findall(text))
 
 
+RELAXED_MIN_WORDS, RELAXED_MAX_WORDS = 100, 180
+
+
+def _validate_relaxed(obj) -> str | None:
+    """Допустимый минимум, если Gemini перегружен и идеальный вариант не получается:
+    ролик выйдет чуть короче, но выйдет. Цифры/латиницу дочистит vosk_clean."""
+    if not isinstance(obj, dict) or not obj.get("story") or not obj.get("title"):
+        return "нет полей story/title"
+    story = obj["story"].strip()
+    n = count_words(story)
+    if not RELAXED_MIN_WORDS <= n <= RELAXED_MAX_WORDS:
+        return f"{n} слов"
+    head = " ".join(story.split()[:28])
+    if "?" not in head:
+        return "нет вопроса в начале"
+    if any(count_words(x) > 26 for x in re.split(r"(?<=[.!?…])\s+", story)):
+        return "очень длинное предложение"
+    return None
+
+
 def _validate(obj) -> str | None:
     if not isinstance(obj, dict):
         return "ожидался объект"
@@ -74,10 +94,24 @@ def write_story(choice: dict, run_dir: Path) -> dict:
   "story": "<текст истории>",
   "description": "<1-2 предложения для описания видео>",
   "hashtags": ["#тег1", "#тег2", "#тег3", "#тег4", "#тег5"]}}"""
+        acceptable: list[dict] = []
+
+        def validate(obj):
+            problem = _validate(obj)
+            if problem and _validate_relaxed(obj) is None:
+                acceptable.append(obj)  # запасной вариант на случай, если идеальный не получится
+            return problem
+
         try:
-            data = gemini.generate_json(prompt, temperature=0.9, validate=_validate, attempts=4)
+            data = gemini.generate_json(prompt, temperature=0.9, validate=validate, attempts=4)
         except Exception as exc:  # noqa: BLE001
-            raise RuntimeError(f"story-writer: Gemini не написал историю: {exc}") from exc
+            if not acceptable:
+                raise RuntimeError(f"story-writer: Gemini не написал историю: {exc}") from exc
+            data = max(acceptable, key=lambda o: -abs(count_words(o["story"]) - (MIN_WORDS + MAX_WORDS) / 2))
+            data.setdefault("description", data.get("hook", ""))
+            data.setdefault("hashtags", ["#тайна", "#загадка", "#мистика"])
+            log.warning("Идеальная история не получилась (%s) — беру допустимый вариант: %d слов",
+                        str(exc)[:80], count_words(data["story"]))
     else:
         log.warning("GEMINI_API_KEY не задан — использую демо-историю")
         data = dict(DEMO_STORY)
