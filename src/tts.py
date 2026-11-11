@@ -416,6 +416,36 @@ def _synth_vosk(narr: list[dict], adir: Path) -> list[dict]:
     return result
 
 
+def synth_cta(text: str, run_dir: Path) -> dict | None:
+    """Озвучка концовки («лайк и подписка») тем же голосом Vosk. Без Vosk — концовка без голоса."""
+    if not vosk_available():
+        return None
+    import numpy as np
+
+    from .narration import vosk_clean
+    try:
+        cfg = voice_config().get("vosk", {})
+        synth = _vosk_synth()
+        sr = int(synth.model.config["audio"].get("sample_rate", 22050))
+        audio = np.asarray(synth.synth_audio(vosk_clean(text), speaker_id=int(env("VOSK_SPEAKER", str(cfg.get("speaker", 3)))),
+                                             speech_rate=float(cfg.get("speech_rate", 1.0))))
+        if audio.dtype != np.int16:
+            audio = (np.clip(audio, -1, 1) * 32767).astype(np.int16)
+        path = run_dir / "audio" / "cta.wav"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sr)
+            w.writeframes(audio.tobytes())
+        dur = audio_duration(path)
+        log.info("Озвучка концовки: %.2f с", dur)
+        return {"path": str(path), "duration": dur}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Концовка без голоса: %s", exc)
+        return None
+
+
 # ------------------------------------------------------------------ Azure (по сценам)
 def _synth_azure(narr: list[dict], adir: Path) -> list[dict]:
     cfg = voice_config()
