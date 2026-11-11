@@ -7,7 +7,7 @@ import time
 
 import requests
 
-from .utils import env, log, retry
+from .utils import env, log
 
 API_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models"
@@ -16,6 +16,9 @@ LIST_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 FALLBACK_MODELS = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"]
 _DISCOVERED: list[str] | None = None
 _DEAD: set[str] = set()
+_SLOW: list[str] = []          # модели, которые в этом запуске не ответили вовремя — в конец очереди
+CALL_TIMEOUT = (15, int(env("GEMINI_CALL_TIMEOUT", "90")))      # подключение, ожидание ответа (с)
+GENERATE_BUDGET = int(env("GEMINI_BUDGET_SECONDS", "360"))       # максимум на один ответ Gemini
 
 
 class GeminiError(RuntimeError):
@@ -82,10 +85,10 @@ def _models() -> list[str]:
     models = discover_models()
     if custom:
         models = [custom] + [m for m in models if m != custom]
-    return [m for m in models if m not in _DEAD]
+    alive = [m for m in models if m not in _DEAD]
+    return [m for m in alive if m not in _SLOW] + [m for m in _SLOW if m in alive]
 
 
-@retry(tries=2, base_delay=5, exceptions=(requests.RequestException, GeminiError), label="gemini")
 def _call(model: str, prompt: str, temperature: float, as_json: bool) -> str:
     key = env("GEMINI_API_KEY")
     if not key:
@@ -96,7 +99,7 @@ def _call(model: str, prompt: str, temperature: float, as_json: bool) -> str:
     }
     if as_json:
         body["generationConfig"]["responseMimeType"] = "application/json"
-    resp = requests.post(API_URL.format(model=model), params={"key": key}, json=body, timeout=(15, 150))
+    resp = requests.post(API_URL.format(model=model), params={"key": key}, json=body, timeout=CALL_TIMEOUT)
     if resp.status_code == 404:
         raise ModelNotFound(model)
     if resp.status_code in (429, 500, 502, 503, 504):
@@ -112,11 +115,15 @@ def _call(model: str, prompt: str, temperature: float, as_json: bool) -> str:
 
 
 def generate(prompt: str, temperature: float = 0.9, as_json: bool = False) -> str:
-    """Пробует модели по очереди: 404 — модель помечается мёртвой; перегрузка/таймаут после 2 попыток —
-    переход к следующей модели (обычно облегчённой и менее загруженной)."""
+    """Пробует модели по очереди с общим лимитом времени GENERATE_BUDGET:
+    404 → модель исключается; таймаут → модель уходит в конец очереди, сразу следующая;
+    429/5xx → следующая модель, затем второй круг после паузы."""
+    deadline = time.monotonic() + GENERATE_BUDGET
     last: Exception | None = None
-    for _round in range(2):
+    for _round in range(3):
         for model in _models():
+            if time.monotonic() > deadline:
+                raise GeminiError(f"Gemini не ответил за {GENERATE_BUDGET} с (последняя ошибка: {last})")
             try:
                 text = _call(model, prompt, temperature, as_json)
                 log.debug("Gemini %s ответил %d символов", model, len(text))
@@ -125,11 +132,17 @@ def generate(prompt: str, temperature: float = 0.9, as_json: bool = False) -> st
                 log.warning("Gemini: модель %s недоступна — исключаю", exc)
                 _DEAD.add(model)
                 last = exc
-            except (requests.RequestException, GeminiError) as exc:
-                log.warning("Gemini %s перегружен или не ответил (%s) — пробую следующую модель", model, str(exc)[:120])
+            except requests.Timeout as exc:
+                log.warning("Gemini %s не ответил за %d с — перехожу к следующей модели", model, CALL_TIMEOUT[1])
+                if model not in _SLOW:
+                    _SLOW.append(model)
                 last = exc
-        if _round == 0:
-            time.sleep(30)
+            except (requests.RequestException, GeminiError) as exc:
+                log.warning("Gemini %s перегружен (%s) — пробую следующую модель", model, str(exc)[:120])
+                last = exc
+        pause = min(20 * (_round + 1), max(0, deadline - time.monotonic()))
+        if pause > 0:
+            time.sleep(pause)
     raise GeminiError(f"Ни одна модель Gemini не ответила: {last}")
 
 

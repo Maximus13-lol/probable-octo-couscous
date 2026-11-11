@@ -17,7 +17,8 @@ description: Публикация Shorts на YouTube через Data API v3 (OA
 - Resumable upload по 8 МБ, повтор на 5xx/сетевых ошибках с экспоненциальной паузой.
 - Если API не принял необязательные поля (`paidProductPlacementDetails`/`containsSyntheticMedia`) — повтор без них и громкое предупреждение: отметку платной рекламы тогда поставить вручную в Studio.
 - Результат: `output/<run>/upload_result.json` + строка в `publish_log.json` (коммитится в репозиторий).
-- Если YouTube вернул `private` вместо `public` — проект API не прошёл аудит (см. README).
+- Аудит Google не нужен: с 02.11.2026 видео из непроверенных API-проектов не делаются приватными. Если вернулся
+  `private` — смотреть настройки доступа по умолчанию в YouTube Studio и `privacy_status`.
 
 ## Проверка без загрузки
 ```bash

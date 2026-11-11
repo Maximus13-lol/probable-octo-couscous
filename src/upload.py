@@ -162,8 +162,8 @@ def upload(video: Path, meta: dict, run_dir: Path) -> dict:
     save_json(run_dir / "upload_result.json", result)
     log.info("Опубликовано: %s (%s)", result["url"], result["privacy"])
     if result["privacy"] != meta["privacy_status"]:
-        log.warning("YouTube выставил статус %s вместо %s. Непроверенные API-проекты загружают только "
-                    "private — пройдите аудит (см. README).", result["privacy"], meta["privacy_status"])
+        log.warning("YouTube выставил статус %s вместо %s — проверьте настройки доступа по умолчанию "
+                    "в YouTube Studio (Настройки → Загрузка видео).", result["privacy"], meta["privacy_status"])
     return result
 
 
