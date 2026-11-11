@@ -26,6 +26,10 @@ on:
         description: "Тема вручную (пусто = trend-scout)"
         type: string
         required: false
+      scheduled:
+        description: "Запуск по расписанию из внешнего будильника (проходит через страж)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # чтобы сохранить used_topics.json, publish_log.json, ads/log.json
@@ -41,6 +45,7 @@ jobs:
     env:
       PYTHONUNBUFFERED: "1"
       PUBLISH: ${{ github.event_name == 'schedule' || (inputs.no_upload == false && inputs.test_ad == false) }}
+      GUARD_SCHEDULED: ${{ github.event_name == 'schedule' || inputs.scheduled == true }}
     steps:
       - uses: actions/checkout@v5
         with:
