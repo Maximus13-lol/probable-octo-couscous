@@ -2,9 +2,16 @@ name: Daily YouTube Short
 
 on:
   schedule:
-    # Два ролика в день. Минуты не «круглые», чтобы не попадать в пик очереди GitHub.
-    - cron: "23 7 * * *"    # 10:23 МСК
-    - cron: "47 15 * * *"   # 18:47 МСК
+    # Два ролика в день. GitHub не гарантирует запуск по cron (в нагрузку запуски пропадают),
+    # поэтому у каждого слота есть резервные запуски; страж (src/schedule_guard.py) пропускает лишние.
+    - cron: "23 7 * * *"    # 10:23 МСК — ролик №1
+    - cron: "53 8 * * *"    # 11:53 МСК — резерв №1
+    - cron: "23 10 * * *"   # 13:23 МСК — резерв №1
+    - cron: "13 12 * * *"   # 15:13 МСК — резерв №1
+    - cron: "47 15 * * *"   # 18:47 МСК — ролик №2
+    - cron: "17 17 * * *"   # 20:17 МСК — резерв №2
+    - cron: "47 18 * * *"   # 21:47 МСК — резерв №2
+    - cron: "37 20 * * *"   # 23:37 МСК — резерв №2
   workflow_dispatch:
     inputs:
       no_upload:
@@ -36,13 +43,26 @@ jobs:
       PUBLISH: ${{ github.event_name == 'schedule' || (inputs.no_upload == false && inputs.test_ad == false) }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: main   # свежий main на момент старта (а не на момент постановки в очередь) — с журналом прошлых запусков
 
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
           cache: pip
 
+      - name: Нужен ли ролик сейчас? (страж расписания)
+        id: guard
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          pip install -q google-api-python-client google-auth requests
+          python -m src.schedule_guard
+
       - name: Системные пакеты (FFmpeg, шрифты)
+        if: steps.guard.outputs.run == 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
@@ -51,9 +71,11 @@ jobs:
           sudo apt-get install -y -qq fonts-montserrat || echo "Montserrat недоступен — будет DejaVu Sans Bold"
 
       - name: Python-зависимости
+        if: steps.guard.outputs.run == 'true'
         run: pip install -r requirements.txt
 
       - name: Кэш моделей RUAccent, faster-whisper и Vosk (скачиваются один раз)
+        if: steps.guard.outputs.run == 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -63,6 +85,7 @@ jobs:
           key: models-ruaccent-1.5.8.3-whisper-small-vosk-0.9-v2
 
       - name: Конвейер
+        if: steps.guard.outputs.run == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           # необязательно: если заданы, озвучка пойдёт через Azure, а Gemini TTS станет запасным
@@ -85,7 +108,7 @@ jobs:
           run || { echo "::warning::Первая попытка не удалась — повтор через 10 минут"; sleep 600; run; }
 
       - name: Артефакт — готовое видео и файлы запуска
-        if: always()
+        if: always() && steps.guard.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: short-${{ github.run_number }}
@@ -100,7 +123,7 @@ jobs:
           retention-days: 14
 
       - name: Артефакт — trends_report.json
-        if: always()
+        if: always() && steps.guard.outputs.run == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: trends-report-${{ github.run_number }}
@@ -109,7 +132,7 @@ jobs:
           retention-days: 30
 
       - name: Сохранить состояние (темы, логи публикаций и показов рекламы)
-        if: success() && env.PUBLISH == 'true'
+        if: success() && env.PUBLISH == 'true' && steps.guard.outputs.run == 'true'
         run: |
           git config user.name "shorts-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
