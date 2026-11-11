@@ -8,6 +8,7 @@ from pathlib import Path
 from . import gemini
 from .demo import DEMO_STORY
 from .trends import load_used_topics
+from .uniqueness import stems
 from .utils import USED_TOPICS_FILE, log, save_json
 
 MIN_WORDS, MAX_WORDS = 130, 160
@@ -96,6 +97,8 @@ def mark_topic_used(choice: dict, story: dict) -> None:
         "topic_en": choice.get("topic_en", ""),
         "source_title": choice.get("source_title", ""),
         "title": story.get("title", ""),
+        "summary": story.get("description", "") or story.get("hook", ""),
+        "keywords": sorted(stems(story.get("story", ""))),
         "date": dt.date.today().isoformat(),
     })
     save_json(USED_TOPICS_FILE, used)

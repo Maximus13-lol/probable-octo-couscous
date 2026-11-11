@@ -162,6 +162,34 @@ def fetch_youtube() -> list[dict]:
 
 
 # ---------------------------------------------------------------- Reddit
+def _reddit_rss(sub: str, headers: dict) -> list[dict]:
+    """Запасной путь: Atom-лента топа недели. Очков в ней нет — «скорость» считаем по месту в топе."""
+    import xml.etree.ElementTree as ET
+    try:
+        r = requests.get(f"https://www.reddit.com/r/{sub}/top/.rss", params={"t": "week", "limit": 25},
+                         headers=headers, timeout=30)
+        r.raise_for_status()
+        root = ET.fromstring(r.content)
+    except Exception:  # noqa: BLE001
+        return []
+    ns = {"a": "http://www.w3.org/2005/Atom"}
+    entries = root.findall("a:entry", ns)
+    out = []
+    for i, e in enumerate(entries):
+        title = (e.findtext("a:title", default="", namespaces=ns) or "").strip()
+        link = e.find("a:link", ns)
+        when = e.findtext("a:published", default="", namespaces=ns) or e.findtext("a:updated", default="", namespaces=ns)
+        try:
+            hours = _hours_since(dt.datetime.fromisoformat(when.replace("Z", "+00:00")))
+        except ValueError:
+            hours = 72.0
+        rank_score = len(entries) - i
+        out.append({"source": "reddit", "title": title, "url": link.get("href") if link is not None else "",
+                    "subreddit": sub, "metrics": {"rank_in_week_top": i + 1, "hours_since_publish": round(hours, 1),
+                                                  "velocity": round(rank_score / max(hours, 1) * 100, 2)}})
+    return [x for x in out if x["title"]]
+
+
 def fetch_reddit() -> list[dict]:
     out: list[dict] = []
     headers = {"User-Agent": "shorts-trend-scout/1.0 (personal research script)"}
@@ -177,7 +205,12 @@ def fetch_reddit() -> list[dict]:
                 return r.json()
             data = _get()
         except Exception as exc:  # noqa: BLE001
-            log.warning("Reddit r/%s недоступен: %s — пропуск", sub, exc)
+            rss = _reddit_rss(sub, headers)
+            if rss:
+                log.info("Reddit r/%s: JSON недоступен (%s), взял RSS-ленту — %d постов", sub, str(exc)[:60], len(rss))
+                out += rss
+            else:
+                log.warning("Reddit r/%s недоступен (JSON и RSS): %s — пропуск", sub, exc)
             continue
         for child in data.get("data", {}).get("children", []):
             p = child.get("data", {})
@@ -297,9 +330,15 @@ def choose_with_gemini(cands: list[dict], used: list[dict]) -> dict:
     return gemini.generate_json(prompt, temperature=0.7, validate=validate)
 
 
-def scout(run_dir: Path, forced_topic: str | None = None) -> dict:
+def scout(run_dir: Path, forced_topic: str | None = None, exclude: list[str] | None = None) -> dict:
+    """exclude — темы, отклонённые в этом запуске (например, история вышла похожей на прошлую)."""
+    from . import uniqueness
+
     used = load_used_topics()
-    report: dict = {"generated_at": dt.datetime.now(dt.timezone.utc).isoformat(), "sources": {}}
+    exclude = list(exclude or [])
+    blocked = used + [{"topic": t} for t in exclude]
+    report: dict = {"generated_at": dt.datetime.now(dt.timezone.utc).isoformat(), "sources": {},
+                    "rejected": [{"topic": t, "why": "отклонено в этом запуске"} for t in exclude]}
 
     if forced_topic:
         choice = {"topic": forced_topic, "topic_en": forced_topic, "hook": "", "source": "manual",
@@ -318,36 +357,63 @@ def scout(run_dir: Path, forced_topic: str | None = None) -> dict:
         report["sources"][name] = len(got)
         items += got
 
-    cands = rank_candidates(items, used)
+    cands = rank_candidates(items, blocked)
     report["candidates"] = cands
     choice: dict | None = None
 
+    # 1) Gemini выбирает из трендов; смысловая проверка на повтор, до 3 попыток
     if cands and gemini.available():
-        try:
-            g = choose_with_gemini(cands, used)
-            c = cands[g["index"]]
+        pool = list(cands)
+        for _ in range(3):
+            if not pool:
+                break
+            try:
+                g = choose_with_gemini(pool, blocked)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Gemini не смог выбрать тему: %s", exc)
+                break
+            c = pool[g["index"]]
+            dup = uniqueness.gemini_duplicate(g["topic"], g.get("hook", ""), used)
+            if dup:
+                report["rejected"].append({"topic": g["topic"], "why": f"повторяет «{dup}»"})
+                blocked.append({"topic": g["topic"], "topic_en": g.get("topic_en", "")})
+                pool = [x for x in pool if x is not c]
+                continue
             choice = {"topic": g["topic"], "topic_en": g.get("topic_en", g["topic"]), "hook": g.get("hook", ""),
                       "source": c["source"], "source_title": c["title"], "source_url": c.get("url"),
-                      "metrics": c["metrics"], "score": c.get("score"),
-                      "reason": g.get("reason", "")}
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Gemini не смог выбрать тему: %s", exc)
+                      "metrics": c["metrics"], "score": c.get("score"), "reason": g.get("reason", "")}
+            break
 
-    if choice is None and cands and gemini.available():
+    # 2) Свежая тема от Gemini, если тренды не дали новой
+    if choice is None and gemini.available():
+        for _ in range(3):
+            fresh = uniqueness.gemini_fresh_topic(used, [b["topic"] for b in blocked[len(used):]])
+            if not fresh:
+                break
+            why = "уже была" if is_used(fresh["topic"], blocked) else None
+            dup = None if why else uniqueness.gemini_duplicate(fresh["topic"], fresh.get("hook", ""), used)
+            if why or dup:
+                report["rejected"].append({"topic": fresh["topic"], "why": why or f"повторяет «{dup}»"})
+                blocked.append({"topic": fresh["topic"]})
+                continue
+            choice = fresh
+            break
+
+    # 3) Без Gemini — лидер по скорости, затем вечнозелёные темы
+    if choice is None and cands and not gemini.available():
         c = cands[0]
         choice = {"topic": c["title"], "topic_en": c["title"], "hook": "", "source": c["source"],
                   "source_title": c["title"], "source_url": c.get("url"), "metrics": c["metrics"],
                   "score": c.get("score"), "reason": "максимальная скорость (Gemini недоступен для выбора)"}
-
     if choice is None:
         for ru, en in EVERGREEN:
-            if not is_used(ru, used) and not is_used(en, used):
+            if not is_used(ru, blocked) and not is_used(en, blocked):
                 why = "нет кандидатов из трендов" if not cands else "нет GEMINI_API_KEY — демо-режим"
                 choice = {"topic": ru, "topic_en": en, "hook": "", "source": "evergreen",
                           "metrics": {}, "reason": f"запасная вечнозелёная тема ({why})"}
                 break
     if choice is None:
-        raise RuntimeError("Нет доступных тем: все запасные темы уже использованы")
+        raise RuntimeError("Нет новых тем: тренды, Gemini и запасной список не дали неповторяющейся темы")
 
     report["chosen"] = choice
     save_json(run_dir / "trends_report.json", report)
