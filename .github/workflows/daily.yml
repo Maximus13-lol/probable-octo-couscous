@@ -67,16 +67,29 @@ jobs:
 
       - name: Системные пакеты (FFmpeg, шрифты)
         if: steps.guard.outputs.run == 'true'
+        timeout-minutes: 12
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq ffmpeg fonts-dejavu-core
-          # Azure Speech SDK на Linux требует libasound2 (название пакета зависит от версии Ubuntu)
-          sudo apt-get install -y -qq libasound2t64 || sudo apt-get install -y -qq libasound2
-          sudo apt-get install -y -qq fonts-montserrat || echo "Montserrat недоступен — будет DejaVu Sans Bold"
+          # Зеркала Ubuntu иногда «висят» (11.11.2026 шаг завис на 30+ минут) — таймауты и повторы
+          APT="sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -y -qq"
+          need=""
+          command -v ffmpeg >/dev/null || need="$need ffmpeg"
+          fc-list | grep -qi "DejaVuSans-Bold" || need="$need fonts-dejavu-core"
+          if [ -n "$need" ]; then
+            for i in 1 2 3; do
+              timeout 240 sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=20 update -qq && \
+              timeout 240 $APT install $need && break
+              echo "::warning::apt попытка $i не удалась, повтор"; sleep 10
+            done
+            command -v ffmpeg >/dev/null || { echo "::error::ffmpeg не установился"; exit 1; }
+          fi
+          # необязательное — не должно останавливать сборку
+          timeout 120 $APT install fonts-montserrat || echo "Montserrat недоступен — будет DejaVu Sans Bold"
+          timeout 120 $APT install libasound2t64 || timeout 120 $APT install libasound2 || echo "libasound2 не установлен (нужен только для Azure)"
 
       - name: Python-зависимости
         if: steps.guard.outputs.run == 'true'
-        run: pip install -r requirements.txt
+        timeout-minutes: 15
+        run: pip install --retries 5 --timeout 60 -r requirements.txt
 
       - name: Кэш моделей RUAccent, faster-whisper и Vosk (скачиваются один раз)
         if: steps.guard.outputs.run == 'true'
