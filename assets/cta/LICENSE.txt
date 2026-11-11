@@ -1,0 +1,2 @@
+Значки like.png, bell.png, hand.png отрисованы из шрифта Noto Color Emoji (Google),
+распространяемого под лицензией SIL Open Font License 1.1: https://github.com/googlefonts/noto-emoji

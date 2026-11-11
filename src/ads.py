@@ -244,6 +244,9 @@ def insert_ad(video: Path, run_dir: Path, test: bool = False, campaign_id: str |
                     "position": "auto"}
 
     dur = _duration(video)
+    asm = load_json(run_dir / "assembly.json", default={}) or {}
+    if asm.get("cta_start"):  # реклама не должна заходить на концовку «лайк и подписка»
+        dur = min(dur, float(asm["cta_start"]))
     start, show = resolve_timing(campaign, dur)
     banner = prepare_banner(campaign, cfg, run_dir / "ad_banner.png")
     bw, bh = Image.open(banner).size

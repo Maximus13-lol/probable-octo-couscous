@@ -16,7 +16,7 @@ import sys
 import time
 import traceback
 
-from . import ads, assemble, images, narration, story, storyboard, trends, tts, uniqueness, upload
+from . import ads, assemble, cta, images, narration, story, storyboard, trends, tts, uniqueness, upload
 from .gemini import available as gemini_ok
 from .utils import OUTPUT_DIR, load_json, log, save_json, setup_logging
 
@@ -82,10 +82,12 @@ def run(args) -> int:
 
         t = step(6, "озвучка (Vosk / Gemini TTS / Azure)")
         voice = tts.synthesize(narr, run_dir, allow_silent=args.no_upload)
+        cta_cfg = cta.config()
+        cta_audio = tts.synth_cta(cta_cfg["voice_text"], run_dir) if cta_cfg.get("enabled") else None
         done("tts", t)
 
         t = step(7, "субтитры + сборка (MoviePy)")
-        video = assemble.assemble(board, imgs, voice, run_dir)
+        video = assemble.assemble(board, imgs, voice, run_dir, cta_audio=cta_audio)
         done("assembly", t)
 
         t = step(8, "ad-inserter")

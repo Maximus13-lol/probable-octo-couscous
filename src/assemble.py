@@ -10,7 +10,7 @@ import numpy as np
 from moviepy import AudioFileClip, CompositeAudioClip, VideoClip, afx
 from PIL import Image
 
-from . import music_gen
+from . import cta, music_gen
 from .subtitles import CENTER_Y, build_subtitles
 from .utils import FPS, MUSIC_DIR, VIDEO_H, VIDEO_W, env, log, save_json
 
@@ -63,10 +63,19 @@ def timeline(tts: list[dict]) -> tuple[list[float], float]:
     return starts, total
 
 
-def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, out_name: str = "video.mp4") -> Path:
+def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, out_name: str = "video.mp4",
+             cta_audio: dict | None = None) -> Path:
     starts, total = timeline(tts)
     n = len(tts)
-    log.info("Длительность ролика: %.1f с, сцен: %d", total, n)
+    story_end = total
+    # --- концовка «лайк и подписка»: после последней фразы, поверх последнего кадра
+    cta_cfg = cta.config()
+    cta_start = None
+    if cta_cfg.get("enabled"):
+        cta_start = total - TAIL + 0.45
+        voice_len = (cta_audio or {}).get("duration", 0.0)
+        total = cta_start + max(float(cta_cfg["min_duration"]), voice_len + 0.25 + 0.6)
+    log.info("Длительность ролика: %.1f с (история %.1f с + концовка), сцен: %d", total, story_end, n)
 
     # --- видео-слой: одна функция кадра (Ken Burns + crossfade + субтитры) — в разы быстрее,
     # чем CompositeVideoClip из сотни клипов с полнокадровым альфа-смешиванием
@@ -77,7 +86,7 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
         spans.append((begin, end, ken_burns_fn(img, end - begin, i)))
 
     subs = []
-    for ev in build_subtitles(board, tts, starts, total, run_dir):
+    for ev in build_subtitles(board, tts, starts, cta_start or total, run_dir):
         rgba = ev.image
         h = rgba.shape[0]
         ys = CENTER_Y - h // 2
@@ -98,12 +107,16 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
                 region = out[ys:ys + rgb.shape[0]].astype(np.float32)
                 out[ys:ys + rgb.shape[0]] = (region * (1 - al) + rgb * al).astype(np.uint8)
                 break
+        if cta_start is not None and t >= cta_start:
+            out = cta.apply(out, t - cta_start, cta_cfg)
         return out
 
     video = VideoClip(frame, duration=total)
 
     # --- звук: озвучка + музыка
     voice = [AudioFileClip(a["path"]).with_start(t0) for a, t0 in zip(tts, starts)]
+    if cta_start is not None and cta_audio and cta_audio.get("path"):
+        voice.append(AudioFileClip(cta_audio["path"]).with_start(cta_start + 0.25))
     music_path = pick_music(run_dir, total)
     music = AudioFileClip(str(music_path))
     if music.duration < total:
@@ -128,6 +141,7 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
     credit_file = music_path.with_suffix(".txt")
     save_json(run_dir / "assembly.json", {
         "duration": round(total, 2), "scene_starts": [round(x, 3) for x in starts],
+        "cta_start": round(cta_start, 2) if cta_start is not None else None,
         "music": music_path.name,
         "music_credit": credit_file.read_text(encoding="utf-8").strip() if credit_file.exists() else None,
     })
