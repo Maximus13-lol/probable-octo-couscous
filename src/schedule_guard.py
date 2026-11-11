@@ -63,7 +63,9 @@ def decide(now: dt.datetime | None = None) -> tuple[bool, str]:
 
 def main() -> int:
     setup_logging()
-    if os.environ.get("GITHUB_EVENT_NAME", "schedule") != "schedule":
+    scheduled = os.environ.get("GUARD_SCHEDULED", "").lower() == "true" or \
+        os.environ.get("GITHUB_EVENT_NAME", "schedule") == "schedule"
+    if not scheduled:
         run, why = True, "ручной запуск — выполняется всегда"
     else:
         run, why = decide()
