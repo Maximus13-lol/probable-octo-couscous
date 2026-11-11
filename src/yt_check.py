@@ -44,8 +44,7 @@ def main() -> int:
         sn, st = ch["snippet"], ch.get("statistics", {})
         print(f"✅ Подключено к каналу: «{sn['title']}» (https://youtube.com/channel/{ch['id']})")
         print(f"   подписчиков: {st.get('subscriberCount', '?')}, видео: {st.get('videoCount', '?')}")
-    print("\nВсё готово к публикации. Помните: пока проект API не прошёл аудит Google, "
-          "загруженные видео будут приватными (см. README, «Аудит YouTube API»).")
+    print("\nВсё готово к публикации: ролики будут выходить публичными (аудит Google не нужен с 02.11.2026).")
     return 0
 
 
