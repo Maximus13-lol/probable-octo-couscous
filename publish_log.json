@@ -23,5 +23,19 @@
     "slot": null,
     "publish_at": null,
     "slot_date": "2026-11-11"
+  },
+  {
+    "date": "2026-11-11",
+    "run_id": "20261111_170032",
+    "video_id": "Rfrafe6tfz8",
+    "url": "https://youtube.com/shorts/Rfrafe6tfz8",
+    "title": "Женщина, которая спасла миллионы жизней #Shorts",
+    "topic": "История Фанни Хессе и забытого научного открытия, изменившего медицину",
+    "source": "reddit",
+    "privacy": "public",
+    "ad_campaign": null,
+    "slot": "19:00",
+    "publish_at": null,
+    "slot_date": "2026-11-11"
   }
 ]
