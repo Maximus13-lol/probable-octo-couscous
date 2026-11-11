@@ -116,6 +116,8 @@ jobs:
         if: steps.guard.outputs.run == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # запасной поставщик текстов, если Gemini перегружен (бесплатные модели OpenRouter)
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           # необязательно: если заданы, озвучка пойдёт через Azure, а Gemini TTS станет запасным
           AZURE_SPEECH_KEY: ${{ secrets.AZURE_SPEECH_KEY }}
           AZURE_SPEECH_REGION: ${{ secrets.AZURE_SPEECH_REGION }}

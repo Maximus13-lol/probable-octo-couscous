@@ -30,7 +30,12 @@ class ModelNotFound(Exception):
 
 
 def available() -> bool:
-    return bool(env("GEMINI_API_KEY"))
+    """Есть ли хоть один поставщик текстов: Gemini (основной) или OpenRouter (запасной)."""
+    from . import openrouter
+    return bool(env("GEMINI_API_KEY")) or openrouter.available()
+
+
+_GEMINI_DOWN = False  # Gemini уже не справился в этом запуске — дальше сразу запасной поставщик
 
 
 def _rank(name: str) -> tuple | None:
@@ -115,15 +120,38 @@ def _call(model: str, prompt: str, temperature: float, as_json: bool) -> str:
 
 
 def generate(prompt: str, temperature: float = 0.9, as_json: bool = False) -> str:
+    """Текст от LLM: сначала Gemini, при перегрузке/ошибке — бесплатные модели OpenRouter."""
+    global _GEMINI_DOWN  # noqa: PLW0603
+    from . import openrouter
+    fallback = openrouter.available()
+    if env("GEMINI_API_KEY") and not _GEMINI_DOWN:
+        try:
+            return _generate_gemini(prompt, temperature, as_json,
+                                    budget=int(env("GEMINI_BUDGET_WITH_FALLBACK", "150")) if fallback else None)
+        except GeminiError as exc:
+            if not fallback:
+                raise
+            _GEMINI_DOWN = True
+            log.warning("Gemini недоступен (%s) — до конца запуска пишу тексты через OpenRouter", str(exc)[:120])
+    if not fallback:
+        raise GeminiError("нет ни GEMINI_API_KEY, ни OPENROUTER_API_KEY")
+    try:
+        return openrouter.generate(prompt, temperature, as_json)
+    except openrouter.OpenRouterError as exc:
+        raise GeminiError(f"запасной OpenRouter тоже не ответил: {exc}") from exc
+
+
+def _generate_gemini(prompt: str, temperature: float, as_json: bool, budget: int | None = None) -> str:
     """Пробует модели по очереди с общим лимитом времени GENERATE_BUDGET:
     404 → модель исключается; таймаут → модель уходит в конец очереди, сразу следующая;
     429/5xx → следующая модель, затем второй круг после паузы."""
-    deadline = time.monotonic() + GENERATE_BUDGET
+    budget = budget or GENERATE_BUDGET
+    deadline = time.monotonic() + budget
     last: Exception | None = None
     for _round in range(3):
         for model in _models():
             if time.monotonic() > deadline:
-                raise GeminiError(f"Gemini не ответил за {GENERATE_BUDGET} с (последняя ошибка: {last})")
+                raise GeminiError(f"Gemini не ответил за {budget} с (последняя ошибка: {last})")
             try:
                 text = _call(model, prompt, temperature, as_json)
                 log.debug("Gemini %s ответил %d символов", model, len(text))
