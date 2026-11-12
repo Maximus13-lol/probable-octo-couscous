@@ -5,12 +5,13 @@
     "model": "vosk-model-tts-ru-0.9-multi",
     "speaker": 3,
     "_speaker_comment": "0–4: голоса Vosk (3 женских, 2 мужских). Выбран 3.",
-    "speech_rate": 1.1,
-    "min_pause_sentence_ms": 400,
-    "min_pause_clause_ms": 250,
+    "speech_rate": 1.2,
+    "min_pause_sentence_ms": 300,
+    "min_pause_clause_ms": 180,
     "min_pause_comma_ms": 0,
-    "min_pause_scene_ms": 450,
-    "_pauses_comment": "Минимальные паузы, мс: после предложения (. ! ? ...), после : ; и перед тире, после запятой (0 — запятые читает сам Vosk), между сценами. Если фразы слипаются — увеличьте."
+    "min_pause_scene_ms": 280,
+    "_pauses_comment": "Минимальные паузы, мс: после предложения (. ! ? ...), после : ; и перед тире, после запятой (0 — запятые читает сам Vosk), между сценами. Если фразы слипаются — увеличьте.",
+    "_tempo_comment": "Темп ускорен 12.11.2026 (было 1.1 и паузы 400/250/450): зрители теряли нить и уходили к середине. Если фразы начнут слипаться — поднимите паузы на 50–100 мс."
   },
   "gemini": {
     "voice": "Charon",
@@ -43,25 +44,25 @@
   "_emphasis_comment": "prosody — выделение ключевых слов темпом/высотой/громкостью (работает с любым голосом); emphasis — тег <emphasis> (Azure поддерживает его не для всех голосов)",
   "pauses_ms": {
     "after_hook": [
-      300,
-      600
+      250,
+      400
     ],
     "before_twist": [
-      300,
-      600
+      250,
+      400
     ],
     "before_resolution": [
       300,
-      600
+      450
     ],
     "between_parts": [
-      150,
-      250
+      100,
+      200
     ]
   },
   "limits": {
-    "rate_min": -15,
-    "rate_max": 10,
+    "rate_min": -6,
+    "rate_max": 8,
     "pitch_min": -8,
     "pitch_max": 10
   }

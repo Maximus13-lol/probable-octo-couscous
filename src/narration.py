@@ -406,7 +406,7 @@ def rule_director(scenes: list[dict], cfg: dict) -> list[dict]:
         if k == n - 1:
             role, pause = "resolution", 0
             for s in segs:
-                s["rate"] = min(s["rate"], -5)
+                s["rate"] = min(s["rate"], -3)
         out.append({"index": sc["index"], "role": role, "segments": segs, "pause_after_ms": pause})
     return out
 
@@ -422,7 +422,7 @@ def gemini_director(scenes: list[dict], cfg: dict, voice_styles: list[str]) -> l
 - text — дословный фрагмент сцены; фрагменты подряд должны дать текст сцены целиком, без изменений.
 - pause_after_ms — пауза после фрагмента внутри сцены: {p['between_parts'][0]}–{p['between_parts'][1]} мс между смысловыми частями,
   {p['before_twist'][0]}–{p['before_twist'][1]} мс перед поворотом сюжета; 0 у последнего фрагмента сцены.
-- rate — темп в процентах относительно базового ({lim['rate_min']}…{lim['rate_max']}): чуть медленнее (−5…−12) в напряжённых местах.
+- rate — темп в процентах относительно базового ({lim['rate_min']}…{lim['rate_max']}): лишь чуть медленнее (−3…−6) в самых напряжённых местах; ролик должен звучать бодро, без затянутых мест.
 - pitch — высота в процентах ({lim['pitch_min']}…{lim['pitch_max']}): чуть выше (+4…+8) в вопросах.
 - emphasis — 0–2 ключевых слова загадки из этого фрагмента (дословно, как в тексте), которые надо выделить голосом.
 Для каждой сцены также:
@@ -461,7 +461,7 @@ def build_segments(scene_text: str, plan: dict, cfg: dict) -> list[Segment]:
     for (s, e), d in zip(spans, plan["segments"]):
         segs.append(Segment(
             s, e,
-            pause_after_ms=_clamp(d.get("pause_after_ms", 0), 0, 900),
+            pause_after_ms=_clamp(d.get("pause_after_ms", 0), 0, 600),
             rate=_clamp(d.get("rate", 0), lim["rate_min"], lim["rate_max"]),
             pitch=_clamp(d.get("pitch", 0), lim["pitch_min"], lim["pitch_max"]),
             emphasis=[w for w in d.get("emphasis") or [] if isinstance(w, str)][:2],
@@ -763,7 +763,7 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
             "index": sc["index"], "role": plan.get("role"), "text": text, "display_text": display,
             "ssml": ssml, "plain_ssml": fallback, "ssml_fallback": bool(problem),
             "tts_text": tts_text, "tts_style": tts_style, "vosk_segments": vsegs,
-            "pause_after_ms": max(_clamp(plan.get("pause_after_ms", 0), 0, 900), vosk_pauses(cfg)["scene"])
+            "pause_after_ms": max(_clamp(plan.get("pause_after_ms", 0), 0, 600), vosk_pauses(cfg)["scene"])
                               if sc is not scenes[-1] else 0,
             "stressed_words": stressed,
             "yo_words": [w.display for w in words if w.source == "yo"],
