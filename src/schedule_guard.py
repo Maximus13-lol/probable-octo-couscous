@@ -39,10 +39,23 @@ def slot_dt(day: dt.date, hhmm: str, tz: ZoneInfo) -> dt.datetime:
     return dt.datetime(day.year, day.month, day.day, h, m, tzinfo=tz)
 
 
+def _today_entries(day: dt.date) -> list[dict]:
+    return [e for e in (load_json(PUBLISH_LOG_FILE, default=[]) or [])
+            if (e.get("slot_date") or e.get("date")) == day.isoformat()]
+
+
+def _is_manual(e: dict) -> bool:
+    """Внеплановый ролик (ручной запуск): у новых записей есть slot_date, но нет slot. Слоты не занимает."""
+    return bool(e.get("manual")) or ("slot_date" in e and not e.get("slot"))
+
+
+def manual_uploads(day: dt.date) -> int:
+    return sum(1 for e in _today_entries(day) if _is_manual(e))
+
+
 def filled_slots(day: dt.date, slots: list[str]) -> set[str]:
-    """Слоты, уже занятые сегодня. Старые записи без поля slot занимают самые ранние слоты по порядку."""
-    entries = [e for e in (load_json(PUBLISH_LOG_FILE, default=[]) or [])
-               if (e.get("slot_date") or e.get("date")) == day.isoformat()]
+    """Слоты, уже занятые сегодня. Старые записи (до поля slot_date) без slot занимают самые ранние слоты."""
+    entries = [e for e in _today_entries(day) if not _is_manual(e)]
     filled = {e["slot"] for e in entries if e.get("slot") in slots}
     legacy = sum(1 for e in entries if not e.get("slot"))
     for s in slots:
@@ -86,6 +99,8 @@ def decide(now: dt.datetime | None = None, channel_count=None) -> dict:
     filled = filled_slots(day, slots)
     unfilled = [s for s in due if s not in filled]
     on_channel = uploads_today_on_channel(day, tz) if channel_count is None else channel_count
+    if on_channel is not None:  # внеплановые ролики (ручные запуски) не считаются за слоты
+        on_channel = max(0, on_channel - manual_uploads(day))
     info = {"run": False, "slot": "", "publish_at": "", "now": now.strftime("%Y-%m-%d %H:%M"),
             "slots": slots, "due": due, "filled": sorted(filled), "on_channel": on_channel}
     if not unfilled:
