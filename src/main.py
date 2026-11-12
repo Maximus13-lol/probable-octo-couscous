@@ -116,7 +116,8 @@ def run(args) -> int:
                 "url": res["url"], "title": meta["title"], "topic": choice["topic"],
                 "source": choice.get("source"), "privacy": res["privacy"],
                 "ad_campaign": ad_info["campaign"] if ad_info else None,
-                "slot": os.environ.get("SLOT") or None, "publish_at": res.get("publish_at"),
+                "slot": os.environ.get("SLOT") or None,
+                "manual": os.environ.get("GUARD_SCHEDULED", "").lower() != "true", "publish_at": res.get("publish_at"),
                 "slot_date": dt.datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat(),
             })
             if ad_info:
