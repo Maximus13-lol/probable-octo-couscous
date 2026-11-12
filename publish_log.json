@@ -65,5 +65,19 @@
     "slot": "15:00",
     "publish_at": "2026-11-12T12:00:00Z",
     "slot_date": "2026-11-12"
+  },
+  {
+    "date": "2026-11-12",
+    "run_id": "20261112_142214",
+    "video_id": "t2mv_eVlwbg",
+    "url": "https://youtube.com/shorts/t2mv_eVlwbg",
+    "title": "Тайна смотрителей маяка островов Фланнан #Shorts",
+    "topic": "Таинственное исчезновение трех смотрителей маяка на островах Фланнан",
+    "source": "youtube",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "19:00",
+    "publish_at": "2026-11-12T16:00:00Z",
+    "slot_date": "2026-11-12"
   }
 ]
