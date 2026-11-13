@@ -21,9 +21,23 @@ def _search(lang: str, query: str) -> dict | None:
     return {"title": p["title"], "url": p.get("fullurl", ""), "extract": p["extract"].strip(), "lang": lang}
 
 
+def _titles(choice: dict) -> list[tuple[str, str]]:
+    """Короткие названия энциклопедических статей по теме (длинная формулировка темы поиском не находится)."""
+    try:
+        from . import gemini
+        obj = gemini.generate_json(f"""Тема ролика: {choice.get('topic')} ({choice.get('topic_en', '')}).
+Как называется статья Википедии об этом событии, месте или человеке? Дай короткие названия статей
+(как заголовок статьи, 1–6 слов) на русском и на английском. Если такой статьи скорее всего нет — пустые строки.
+Верни JSON: {{"ru": "...", "en": "..."}}""", temperature=0.2)
+        return [(lang, (obj.get(lang) or "").strip()) for lang in ("ru", "en") if (obj.get(lang) or "").strip()]
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Не удалось подобрать названия статей: %s", exc)
+        return []
+
+
 def lookup(choice: dict) -> dict | None:
     """Статья ru-Википедии по теме, иначе en-Википедии. None — если ничего подходящего."""
-    for lang, q in (("ru", choice.get("topic", "")), ("en", choice.get("topic_en", ""))):
+    for lang, q in _titles(choice) + [("ru", choice.get("topic", "")), ("en", choice.get("topic_en", ""))]:
         if not q:
             continue
         try:

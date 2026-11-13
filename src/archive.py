@@ -33,7 +33,8 @@ def search(query: str, limit: int = 10) -> list[dict]:
         "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 1080})
     r.raise_for_status()
     out = []
-    for p in (r.json().get("query") or {}).get("pages", {}).values():
+    pages = list((r.json().get("query") or {}).get("pages", {}).values())
+    for p in pages:
         ii = (p.get("imageinfo") or [{}])[0]
         md = ii.get("extmetadata") or {}
         lic = _plain(md.get("LicenseShortName", {}).get("value", ""))
@@ -47,6 +48,7 @@ def search(query: str, limit: int = 10) -> list[dict]:
             "description": _plain(md.get("ImageDescription", {}).get("value", ""))[:220],
             "date": _plain(md.get("DateTimeOriginal", {}).get("value", ""))[:40],
         })
+    log.info("Commons «%s»: найдено %d, подходит по лицензии и размеру %d", query, len(pages), len(out))
     return out
 
 
