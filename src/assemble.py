@@ -31,8 +31,6 @@ def ken_burns_fn(path: Path, duration: float, index: int):
     rng = random.Random(index)
     dx, dy = rng.uniform(-0.25, 0.25), rng.uniform(-0.25, 0.25)
 
-    brand_layers = _brand_layers(brand) if brand else []
-
     def frame(t: float) -> np.ndarray:
         p = min(1.0, max(0.0, t / max(duration, 1e-3)))
         p = p * p * (3 - 2 * p)  # плавный старт/финиш
