@@ -123,5 +123,20 @@
     "manual": false,
     "publish_at": null,
     "slot_date": "2026-11-13"
+  },
+  {
+    "date": "2026-11-13",
+    "run_id": "20261113_163305",
+    "video_id": "_Sy7u6Eg6oQ",
+    "url": "https://youtube.com/shorts/_Sy7u6Eg6oQ",
+    "title": "Проклятие Унакоти: миллионы лиц в скалах #Shorts",
+    "topic": "Проклятие Унакоти: загадочные каменные барельефы посреди индийских джунглей",
+    "source": "youtube",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "21:00",
+    "manual": false,
+    "publish_at": "2026-11-13T18:00:00Z",
+    "slot_date": "2026-11-13"
   }
 ]
