@@ -61,7 +61,8 @@ def _queries(story: dict, topic_en: str) -> list[str]:
 документы из истории, как они названы в энциклопедиях. Без общих слов вроде "mystery", "ghost".
 Если в истории нет реальных конкретных объектов — верни пустой список.
 Верни JSON: {{"queries": ["..."]}}""", temperature=0.3)
-    return [q for q in (obj.get("queries") or []) if isinstance(q, str) and q.strip()][:4]
+    qs = obj if isinstance(obj, list) else (obj.get("queries") or [])  # модель иногда отдаёт просто список
+    return [q for q in qs if isinstance(q, str) and q.strip()][:4]
 
 
 def _pick(board: dict, cands: list[dict], max_photos: int) -> list[dict]:
@@ -80,7 +81,10 @@ def _pick(board: dict, cands: list[dict], max_photos: int) -> list[dict]:
 Верни JSON: {{"photos": [{{"candidate": 0, "scene": 3, "caption": "..."}}]}}""", temperature=0.2)
     out, used_scenes = [], set()
     n_scenes = len(board["scenes"])
-    for p in obj.get("photos") or []:
+    photos = obj if isinstance(obj, list) else (obj.get("photos") or [])  # модель иногда отдаёт просто список
+    for p in photos:
+        if not isinstance(p, dict):
+            continue
         try:
             ci, si = int(p["candidate"]), int(p["scene"])
         except (KeyError, TypeError, ValueError):
