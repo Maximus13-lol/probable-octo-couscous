@@ -138,5 +138,21 @@
     "manual": false,
     "publish_at": "2026-11-13T18:00:00Z",
     "slot_date": "2026-11-13"
+  },
+  {
+    "date": "2026-11-13",
+    "run_id": "20261113_232402",
+    "video_id": "PKnuDjwBsrA",
+    "url": "https://youtube.com/shorts/PKnuDjwBsrA",
+    "title": "Куда исчез экипаж Мэри Селест? #Shorts",
+    "topic": "Корабль-призрак «Мэри Селест»: куда исчез экипаж в 1872 году",
+    "source": "manual",
+    "privacy": "unlisted",
+    "ad_campaign": null,
+    "slot": null,
+    "cta_voice": null,
+    "manual": true,
+    "publish_at": null,
+    "slot_date": "2026-11-14"
   }
 ]
