@@ -14,6 +14,7 @@ from __future__ import annotations
 import base64
 import io
 import os
+import random
 import re
 import subprocess
 import wave
@@ -414,6 +415,60 @@ def _synth_vosk(narr: list[dict], adir: Path) -> list[dict]:
         log.info("Озвучка сцены %d: %.2f с (Vosk, голос %d, слов узнано %.0f%%)",
                  sc["index"], dur, speaker, matched * 100)
     return result
+
+
+CTA_VOICE_DIR = Path(__file__).resolve().parent.parent / "assets" / "cta" / "voice"
+CTA_VOICE_EXT = {".mp3", ".wav", ".m4a", ".ogg", ".opus", ".aac", ".flac", ".webm", ".mp4", ".amr", ".3gp"}
+
+
+def _loudness(path: Path) -> float | None:
+    """Интегральная громкость файла, LUFS (ffmpeg ebur128)."""
+    try:
+        r = subprocess.run(["ffmpeg", "-hide_banner", "-nostats", "-i", str(path), "-af", "ebur128", "-f", "null", "-"],
+                           capture_output=True, text=True, timeout=60)
+        vals = re.findall(r"I:\s+(-?\d+(?:\.\d+)?) LUFS", r.stderr)
+        return float(vals[-1]) if vals else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def pick_cta_recording(run_dir: Path, voice: list[dict] | None = None) -> dict | None:
+    """Ваша живая запись просьбы подписаться (assets/cta/voice/*). Берётся случайная, но не та же,
+    что в прошлом ролике. Тишина по краям обрезается, громкость подгоняется под озвучку истории."""
+    files = sorted(p for p in CTA_VOICE_DIR.glob("*") if p.is_file() and p.suffix.lower() in CTA_VOICE_EXT)
+    if not files:
+        return None
+    from .utils import PUBLISH_LOG_FILE, load_json
+    last = next((e.get("cta_voice") for e in reversed(load_json(PUBLISH_LOG_FILE, default=[]) or [])
+                 if e.get("cta_voice")), None)
+    pool = [p for p in files if p.name != last] or files
+    src = random.choice(pool)
+    target = None
+    if voice:
+        target = _loudness(Path(voice[0]["path"]))
+    target = min(-12.0, max(-24.0, target)) if target is not None else -16.0
+    out = run_dir / "audio" / "cta.wav"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    trim = ("silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05,"
+            "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.1,areverse,")
+    try:
+        dur = 0.0
+        for flt in (trim, ""):  # тихая запись могла «обрезаться» целиком — тогда без обрезки тишины
+            subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(src), "-vn", "-ac", "1", "-ar", "44100",
+                            "-af", f"{flt}highpass=f=70,loudnorm=I={target:.1f}:TP=-1.5:LRA=11", str(out)],
+                           check=True, timeout=120)
+            with wave.open(str(out), "rb") as w:
+                dur = w.getnframes() / float(w.getframerate())
+            if dur >= 0.5:
+                break
+        if dur < 0.5 or dur > 12:
+            log.warning("Запись концовки %s длится %.1f с — пропускаю (нужно 1–12 с)", src.name, dur)
+            return None
+        log.info("Концовка: ваша запись %s (%.2f с, громкость под озвучку %.0f LUFS)", src.name, dur, target)
+        return {"path": str(out), "duration": dur, "source": src.name}
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Не удалось подготовить запись концовки %s (%s) — озвучу голосом Vosk", src.name, exc)
+        return None
 
 
 def synth_cta(text: str, run_dir: Path) -> dict | None:
