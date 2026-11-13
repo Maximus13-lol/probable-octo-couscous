@@ -31,7 +31,8 @@ on:
         default: false
 
 permissions:
-  contents: write   # чтобы сохранить used_topics.json, publish_log.json, ads/log.json
+  contents: write   # чтобы сохранить used_topics.json, publish_log.json, ads/log.json, inbox/
+  issues: write     # режим «живой голос»: уведомление о новом сценарии для начитки
 
 concurrency:
   group: daily-short
@@ -163,12 +164,21 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
 
+      - name: Уведомление о сценарии для живой озвучки
+        if: success() && env.PUBLISH == 'true' && steps.guard.outputs.run == 'true' && hashFiles('output/HUMAN_NOTIFY.md') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TITLE=$(head -1 output/HUMAN_NOTIFY.md | sed 's/^# *//')
+          gh issue create --title "🎙 Начитать: $TITLE" --body-file output/HUMAN_NOTIFY.md || echo "::warning::не удалось создать issue"
+
       - name: Сохранить состояние (темы, логи публикаций и показов рекламы)
         if: success() && env.PUBLISH == 'true' && steps.guard.outputs.run == 'true'
         run: |
           git config user.name "shorts-bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add used_topics.json publish_log.json ads/log.json trends_quota.json 2>/dev/null || true
+          git add -A inbox 2>/dev/null || true   # режим «живой голос»: новые сценарии / удалённые после публикации
           if git diff --cached --quiet; then echo "Нет изменений"; exit 0; fi
           git commit -m "chore: состояние после публикации $(date -u +%F) [skip ci]"
           for i in 1 2 3; do
