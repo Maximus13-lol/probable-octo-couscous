@@ -18,7 +18,7 @@ import time
 import traceback
 from zoneinfo import ZoneInfo
 
-from . import ads, assemble, cta, images, narration, story, storyboard, trends, tts, uniqueness, upload
+from . import ads, assemble, cta, human_voice, images, narration, story, storyboard, trends, tts, uniqueness, upload
 from .gemini import available as gemini_ok
 from .utils import OUTPUT_DIR, load_json, log, save_json, setup_logging
 
@@ -26,6 +26,50 @@ from .utils import OUTPUT_DIR, load_json, log, save_json, setup_logging
 def step(n: int, name: str) -> float:
     log.info("━━━━━━━━ [%d/9] %s ━━━━━━━━", n, name)
     return time.time()
+
+
+def make_script(args, run_dir, summary, done):
+    """Шаги 1–4: тема → история (с проверкой уникальности) → раскадровка → режиссура озвучки."""
+    # trend-scout + story-writer с проверкой уникальности: если история вышла похожей на прошлую —
+    # тема отклоняется и выбирается другая (до 3 раз)
+    rejected: list[str] = []
+    for attempt in range(1, 4):
+        t = step(1, "trend-scout" + (f" (попытка {attempt})" if attempt > 1 else ""))
+        choice = trends.scout(run_dir, forced_topic=args.topic, exclude=rejected)
+        done("trend-scout", t)
+
+        t = step(2, "story-writer")
+        st = story.write_story(choice, run_dir)
+        done("story-writer", t)
+        sim = uniqueness.similar_story(st["story"], trends.load_used_topics())
+        if not sim or args.topic or not gemini_ok():
+            break
+        past, score = sim
+        log.warning("История похожа на прошлую «%s» (сходство %.2f) — выбираю другую тему",
+                    past.get("title") or past.get("topic"), score)
+        rejected.append(choice["topic"])
+    else:
+        raise RuntimeError("Не удалось получить непохожую историю за 3 попытки")
+    summary["uniqueness"] = {"rejected_in_run": rejected}
+
+    t = time.time()
+    if args.no_upload and not args.mark_used:
+        log.info("--no-upload: тема НЕ записывается в used_topics.json (добавьте --mark-used, чтобы записать)")
+    else:
+        story.mark_topic_used(choice, st)
+    done("story-writer", t)
+
+    t = step(3, "storyboard")
+    board = storyboard.make_storyboard(st, choice.get("topic_en", choice["topic"]), run_dir)
+    done("storyboard", t)
+
+    t = step(4, "narration-director (ударения, паузы, SSML)")
+    voice_cfg = narration.voice_config()
+    styles = tts.voice_styles(voice_cfg["voice"]) if tts.azure_available() else []
+    narr = narration.direct(board, run_dir, voice_cfg["voice"], styles)
+    done("narration", t)
+
+    return choice, st, board, narr
 
 
 def run(args) -> int:
@@ -38,44 +82,32 @@ def run(args) -> int:
         summary["steps"][name] = round(time.time() - t0, 1)
 
     try:
-        # trend-scout + story-writer с проверкой уникальности: если история вышла похожей на прошлую —
-        # тема отклоняется и выбирается другая (до 3 раз)
-        rejected: list[str] = []
-        for attempt in range(1, 4):
-            t = step(1, "trend-scout" + (f" (попытка {attempt})" if attempt > 1 else ""))
-            choice = trends.scout(run_dir, forced_topic=args.topic, exclude=rejected)
-            done("trend-scout", t)
-
-            t = step(2, "story-writer")
-            st = story.write_story(choice, run_dir)
-            done("story-writer", t)
-            sim = uniqueness.similar_story(st["story"], trends.load_used_topics())
-            if not sim or args.topic or not gemini_ok():
-                break
-            past, score = sim
-            log.warning("История похожа на прошлую «%s» (сходство %.2f) — выбираю другую тему",
-                        past.get("title") or past.get("topic"), score)
-            rejected.append(choice["topic"])
+        human = None   # сценарий из inbox/ (режим «живой голос»)
+        rec = None
+        if human_voice.enabled() and not args.topic:
+            human = human_voice.next_ready()
+            if human:
+                rec = human_voice.recording(human)
+                log.info("Живой голос: собираю сценарий %s по записи %s", human.name, rec.name)
+            else:
+                if human_voice.need_new_script():
+                    choice, st, board, narr = make_script(args, run_dir, summary, done)
+                    item = human_voice.save_script(run_id, choice, st, board, narr)
+                    (OUTPUT_DIR / "HUMAN_NOTIFY.md").write_text(human_voice.notify_text(item), encoding="utf-8")
+                    summary["human_script"] = item.name
+                human = human_voice.overdue()
+                if not human:
+                    log.info("Живой голос: ждём запись (сценариев в очереди: %d) — публикации в этот раз нет",
+                             len(human_voice.pending()))
+                    summary["status"] = "waiting_voice"
+                    return 0
+                log.warning("Живой голос: запись к %s не пришла вовремя — публикую с голосом Vosk", human.name)
+        if human:
+            state = human_voice.load(human)
+            choice, st, board, narr = state["choice"], state["story"], state["board"], state["narration"]
+            summary["human_script"] = human.name
         else:
-            raise RuntimeError("Не удалось получить непохожую историю за 3 попытки")
-        summary["uniqueness"] = {"rejected_in_run": rejected}
-
-        t = time.time()
-        if args.no_upload and not args.mark_used:
-            log.info("--no-upload: тема НЕ записывается в used_topics.json (добавьте --mark-used, чтобы записать)")
-        else:
-            story.mark_topic_used(choice, st)
-        done("story-writer", t)
-
-        t = step(3, "storyboard")
-        board = storyboard.make_storyboard(st, choice.get("topic_en", choice["topic"]), run_dir)
-        done("storyboard", t)
-
-        t = step(4, "narration-director (ударения, паузы, SSML)")
-        voice_cfg = narration.voice_config()
-        styles = tts.voice_styles(voice_cfg["voice"]) if tts.azure_available() else []
-        narr = narration.direct(board, run_dir, voice_cfg["voice"], styles)
-        done("narration", t)
+            choice, st, board, narr = make_script(args, run_dir, summary, done)
 
         t = step(5, "картинки (Pollinations)")
         imgs = images.generate_images(board, run_dir)
@@ -83,7 +115,8 @@ def run(args) -> int:
         done("images", t)
 
         t = step(6, "озвучка (Vosk / Gemini TTS / Azure)")
-        voice = tts.synthesize(narr, run_dir, allow_silent=args.no_upload)
+        voice = (human_voice.voice_from_recording(rec, narr, run_dir) if rec
+                 else tts.synthesize(narr, run_dir, allow_silent=args.no_upload))
         cta_cfg = cta.config()
         cta_audio = None
         if cta_cfg.get("enabled"):  # сначала ваша живая запись (assets/cta/voice), иначе голос Vosk
@@ -126,6 +159,8 @@ def run(args) -> int:
             if ad_info:
                 ads.log_impression(ad_info, res["url"], meta["title"])
         done("publisher", t)
+        if human and not (args.no_upload or args.test_ad):
+            human_voice.finish(human)  # сценарий и запись больше не нужны
         summary["status"] = "ok"
         return 0
     except Exception as exc:  # noqa: BLE001

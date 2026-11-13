@@ -1,0 +1,8 @@
+{
+  "enabled": false,
+  "queue_size": 2,
+  "fallback_after_hours": 24,
+  "fallback": "vosk",
+  "min_match": 0.6,
+  "_comment": "Режим «живой голос»: конвейер готовит сценарий в inbox/<id>/script.md и создаёт issue на GitHub; вы загружаете запись в ту же папку — следующий запуск соберёт и опубликует ролик в слот. queue_size — сколько сценариев держать готовыми к начитке. fallback: vosk — если записи нет дольше fallback_after_hours часов, ролик выходит с голосом Vosk; wait — ждать запись. min_match — какая доля слов сценария должна узнаваться в записи. enabled=true — включить."
+}
