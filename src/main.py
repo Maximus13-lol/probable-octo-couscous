@@ -85,7 +85,9 @@ def run(args) -> int:
         t = step(6, "озвучка (Vosk / Gemini TTS / Azure)")
         voice = tts.synthesize(narr, run_dir, allow_silent=args.no_upload)
         cta_cfg = cta.config()
-        cta_audio = tts.synth_cta(cta_cfg["voice_text"], run_dir) if cta_cfg.get("enabled") else None
+        cta_audio = None
+        if cta_cfg.get("enabled"):  # сначала ваша живая запись (assets/cta/voice), иначе голос Vosk
+            cta_audio = tts.pick_cta_recording(run_dir, voice) or tts.synth_cta(cta_cfg["voice_text"], run_dir)
         done("tts", t)
 
         t = step(7, "субтитры + сборка (MoviePy)")
@@ -117,6 +119,7 @@ def run(args) -> int:
                 "source": choice.get("source"), "privacy": res["privacy"],
                 "ad_campaign": ad_info["campaign"] if ad_info else None,
                 "slot": os.environ.get("SLOT") or None,
+                "cta_voice": (cta_audio or {}).get("source"),
                 "manual": os.environ.get("GUARD_SCHEDULED", "").lower() != "true", "publish_at": res.get("publish_at"),
                 "slot_date": dt.datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat(),
             })
