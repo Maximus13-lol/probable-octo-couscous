@@ -66,6 +66,21 @@ def build_metadata(story: dict, ad_info: dict | None, music_credit: str | None =
         hook=story.get("hook", ""), description=story.get("description", ""), ad_block=ad_block,
         hashtags=" ".join(hashtags), music_credit=music_credit or tpl.get("music_credit_default", ""),
     )
+    extra = []
+    if story.get("question"):
+        extra.append("💬 " + story["question"] + " Пишите в комментариях!")
+    if story.get("sources"):
+        extra.append("Источники:\n" + "\n".join("• " + x for x in story["sources"]))
+    if story.get("photo_credits"):
+        extra.append("Архивные фото:\n" + "\n".join("• " + x for x in story["photo_credits"]))
+    if extra:  # после основного текста, перед хэштегами
+        tags_line = " ".join(hashtags)
+        block = "\n\n".join(extra)
+        desc = desc.replace(tags_line, block + "\n\n" + tags_line, 1) if tags_line and tags_line in desc \
+            else desc + "\n\n" + block
+    if story.get("photo_credits"):
+        desc = desc.replace("Изображения и озвучка созданы с помощью ИИ.",
+                            "Иллюстрации (кроме архивных фото) и озвучка созданы с помощью ИИ.")
     if ad_block:
         # ссылка рекламодателя и пометка «Реклама» — первыми строками, чтобы были видны без «ещё»
         desc = ad_block + "\n\n" + desc.replace(ad_block, "").strip()

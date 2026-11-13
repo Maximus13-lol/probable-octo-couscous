@@ -29,6 +29,14 @@ on:
         description: "Запуск по расписанию из внешнего будильника (проходит через страж)"
         type: boolean
         default: false
+      pilot:
+        description: "Пробный ролик со всеми улучшениями (config/quality.json), загрузка по ссылке (unlisted)"
+        type: boolean
+        default: false
+      rubric:
+        description: "Рубрика для пробного ролика: mystery / versions / myth (пусто — по кругу)"
+        type: string
+        required: false
 
 permissions:
   contents: write   # чтобы сохранить used_topics.json, publish_log.json, ads/log.json, inbox/
@@ -128,6 +136,9 @@ jobs:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
           POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
           TOPIC: ${{ inputs.topic }}
+          PILOT: ${{ inputs.pilot }}
+          RUBRIC: ${{ inputs.rubric }}
+          PRIVACY_OVERRIDE: ${{ inputs.pilot == true && 'unlisted' || '' }}
           SLOT: ${{ steps.guard.outputs.slot }}
           PUBLISH_AT: ${{ steps.guard.outputs.publish_at }}
         run: |
