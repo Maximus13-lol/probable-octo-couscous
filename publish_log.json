@@ -93,5 +93,20 @@
     "slot": null,
     "publish_at": null,
     "slot_date": "2026-11-13"
+  },
+  {
+    "date": "2026-11-13",
+    "run_id": "20261113_121554",
+    "video_id": "cu6FcTB1Kmg",
+    "url": "https://youtube.com/shorts/cu6FcTB1Kmg",
+    "title": "Секретная комната за стеной старого дома #Shorts",
+    "topic": "Секретная комната за стеной старого дома",
+    "source": "youtube",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "17:00",
+    "manual": false,
+    "publish_at": "2026-11-13T14:00:00Z",
+    "slot_date": "2026-11-13"
   }
 ]
