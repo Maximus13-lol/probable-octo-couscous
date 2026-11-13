@@ -18,7 +18,7 @@ import time
 import traceback
 from zoneinfo import ZoneInfo
 
-from . import ads, assemble, cta, human_voice, images, narration, story, storyboard, trends, tts, uniqueness, upload
+from . import ads, archive, assemble, cta, human_voice, images, quality, narration, story, storyboard, trends, tts, uniqueness, upload
 from .gemini import available as gemini_ok
 from .utils import OUTPUT_DIR, load_json, log, save_json, setup_logging
 
@@ -109,7 +109,12 @@ def run(args) -> int:
         else:
             choice, st, board, narr = make_script(args, run_dir, summary, done)
 
-        t = step(5, "картинки (Pollinations)")
+        t = step(5, "картинки (архивные фото + Pollinations)")
+        if quality.on("archive_photos"):
+            used_photos = archive.place_photos(board, st, choice.get("topic_en", choice["topic"]), run_dir,
+                                               int(quality.config().get("max_archive_photos", 2)))
+            st["photo_credits"] = archive.credits(used_photos)
+            summary["archive_photos"] = len(used_photos)
         imgs = images.generate_images(board, run_dir)
         save_json(run_dir / "storyboard.json", board)  # + полные промпты
         done("images", t)
@@ -124,7 +129,7 @@ def run(args) -> int:
         done("tts", t)
 
         t = step(7, "субтитры + сборка (MoviePy)")
-        video = assemble.assemble(board, imgs, voice, run_dir, cta_audio=cta_audio)
+        video = assemble.assemble(board, imgs, voice, run_dir, cta_audio=cta_audio, brand=quality.overlays(st))
         done("assembly", t)
 
         t = step(8, "ad-inserter")
@@ -138,12 +143,14 @@ def run(args) -> int:
         meta = upload.build_metadata(st, ad_info, asm.get("music_credit"))
         save_json(run_dir / "metadata.json", meta)
         summary["voice"] = voice[0]["voice"] if voice else None
-        summary.update({"topic": choice["topic"], "title": meta["title"], "video": str(final),
+        summary.update({"rubric": st.get("rubric"), "sources": st.get("sources"), "topic": choice["topic"], "title": meta["title"], "video": str(final),
                         "duration": asm.get("duration"), "ad": ad_info and ad_info["campaign"]})
         if args.no_upload or args.test_ad:
             log.info("Загрузка пропущена (%s). Видео: %s", "--test-ad" if args.test_ad else "--no-upload", final)
         else:
             meta["publish_at"] = os.environ.get("PUBLISH_AT") or None
+            if os.environ.get("PRIVACY_OVERRIDE"):  # пробный ролик — например, unlisted (доступ по ссылке)
+                meta["privacy_status"] = os.environ["PRIVACY_OVERRIDE"]
             res = upload.upload(final, meta, run_dir)
             summary["upload"] = res
             upload.append_publish_log({

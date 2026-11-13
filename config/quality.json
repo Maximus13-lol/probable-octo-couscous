@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "features": {
+    "facts": true,
+    "verdict": true,
+    "rubrics": true,
+    "archive_photos": true,
+    "branding": true
+  },
+  "max_archive_photos": 2,
+  "branding": {"channel_name": ""},
+  "_comment": "Улучшения против «нейро-шаблона». enabled=false — только для пробного ролика (workflow → pilot). facts — справка из Википедии и «Источники» в описании; verdict — вывод автора и вопрос зрителю в конце; rubrics — рубрики по кругу (тайна / три версии / правда или миф) с плашкой в начале; archive_photos — настоящие фото из Wikimedia Commons с авторством; branding — водяной знак с названием канала (пусто — берётся из YouTube)."
+}

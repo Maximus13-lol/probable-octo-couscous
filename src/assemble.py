@@ -31,6 +31,8 @@ def ken_burns_fn(path: Path, duration: float, index: int):
     rng = random.Random(index)
     dx, dy = rng.uniform(-0.25, 0.25), rng.uniform(-0.25, 0.25)
 
+    brand_layers = _brand_layers(brand) if brand else []
+
     def frame(t: float) -> np.ndarray:
         p = min(1.0, max(0.0, t / max(duration, 1e-3)))
         p = p * p * (3 - 2 * p)  # плавный старт/финиш
@@ -54,6 +56,34 @@ def pick_music(run_dir: Path, duration: float) -> Path:
     return music_gen.generate(run_dir / "music_generated.wav", duration=duration + 2, seed=random.randint(1, 10_000))
 
 
+def _text_layer(text: str, size: int, fill, bg=None, pad=(18, 10), opacity: float = 1.0):
+    from PIL import Image, ImageDraw, ImageFont
+    from .utils import find_font
+    font = ImageFont.truetype(find_font(), size)
+    probe = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    l, t, r, b = probe.textbbox((0, 0), text, font=font, stroke_width=3)
+    w, h = r - l + 2 * pad[0], b - t + 2 * pad[1]
+    img = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    d = ImageDraw.Draw(img)
+    if bg:
+        d.rounded_rectangle((0, 0, w - 1, h - 1), radius=14, fill=bg)
+    d.text((pad[0] - l, pad[1] - t), text, font=font, fill=fill, stroke_width=0 if bg else 3, stroke_fill="black")
+    arr = np.asarray(img).astype(np.float32)
+    return arr[:, :, :3], arr[:, :, 3:4] / 255.0 * opacity
+
+
+def _brand_layers(brand: dict) -> list:
+    """Водяной знак канала (весь ролик) и плашка рубрики (0,3–3,3 с)."""
+    layers = []
+    if brand.get("channel"):
+        rgb, al = _text_layer(brand["channel"], 34, (255, 255, 255, 255), opacity=0.55)
+        layers.append((0.0, 1e9, (110, 40, rgb, al)))
+    if brand.get("rubric"):
+        rgb, al = _text_layer(brand["rubric"], 46, (255, 255, 255, 255), bg=(200, 30, 30, 235))
+        layers.append((0.3, 3.3, (170, (VIDEO_W - rgb.shape[1]) // 2, rgb, al)))
+    return layers
+
+
 def timeline(tts: list[dict]) -> tuple[list[float], float]:
     starts, t = [], 0.0
     for a in tts:
@@ -64,7 +94,7 @@ def timeline(tts: list[dict]) -> tuple[list[float], float]:
 
 
 def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, out_name: str = "video.mp4",
-             cta_audio: dict | None = None) -> Path:
+             cta_audio: dict | None = None, brand: dict | None = None) -> Path:
     starts, total = timeline(tts)
     n = len(tts)
     story_end = total
@@ -93,6 +123,8 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
         alpha = rgba[:, :, 3:4].astype(np.float32) / 255.0
         subs.append((ev.start, ev.end, ys, rgba[:, :, :3].astype(np.float32), alpha))
 
+    brand_layers = _brand_layers(brand) if brand else []
+
     def frame(t: float) -> np.ndarray:
         active = [(b, e, f) for b, e, f in spans if b <= t < e] or [spans[-1]]
         b, e, f = active[-1]
@@ -107,6 +139,14 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
                 region = out[ys:ys + rgb.shape[0]].astype(np.float32)
                 out[ys:ys + rgb.shape[0]] = (region * (1 - al) + rgb * al).astype(np.uint8)
                 break
+        for t0, t1, (y0, x0, rgb, al) in brand_layers:
+            if t0 <= t < t1 and (cta_start is None or t < cta_start):
+                fade = min(1.0, (t - t0) / 0.25, (t1 - t) / 0.25) if t1 < 1e8 else 1.0
+                out = out.copy() if not out.flags.writeable else out
+                h, w = rgb.shape[:2]
+                region = out[y0:y0 + h, x0:x0 + w].astype(np.float32)
+                a = al * fade
+                out[y0:y0 + h, x0:x0 + w] = (region * (1 - a) + rgb * a).astype(np.uint8)
         if cta_start is not None and t >= cta_start:
             out = cta.apply(out, t - cta_start, cta_cfg)
         return out

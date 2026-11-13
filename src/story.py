@@ -5,7 +5,7 @@ import datetime as dt
 import re
 from pathlib import Path
 
-from . import gemini
+from . import facts, gemini, quality
 from .demo import DEMO_STORY
 from .trends import load_used_topics
 from .uniqueness import stems
@@ -70,7 +70,33 @@ def _validate(obj) -> str | None:
     return None
 
 
+def _extras(choice: dict) -> tuple[str, dict]:
+    """Доп. требования к истории: справка-факты, рубрика, вывод от лица канала и вопрос зрителю."""
+    parts, meta = [], {}
+    if quality.on("facts"):
+        art = facts.lookup(choice)
+        meta["article"] = art
+        meta["sources"] = facts.sources(choice, art)
+        if art:
+            parts.append("СПРАВКА (статья «" + art["title"] + "»). Опирайся на факты из неё: имена, даты, места. "
+                         "Не выдумывай деталей, которых нет в справке или в общеизвестных источниках. Если справка "
+                         "НЕ про эту тему — не используй её и верни reference_used=false:\n\"\"\"" +
+                         art["extract"][:3500] + "\"\"\"")
+    rub = quality.rubric()
+    if rub:
+        meta["rubric"] = rub
+        parts.append(f"Формат ролика — рубрика «{rub['label']}»: {rub['prompt']}")
+    if quality.on("verdict"):
+        meta["verdict"] = True
+        parts.append("Концовка обязательна в таком виде: предпоследнее предложение — честный вывод от лица автора "
+                     "канала («Я думаю…», «Мне кажется самой правдоподобной…»), с коротким объяснением почему; "
+                     "ПОСЛЕДНЕЕ предложение — вопрос зрителю («А вы как думаете…?», «Какая версия ближе вам?»), "
+                     "заканчивается знаком «?». Верни этот вопрос также в поле question.")
+    return ("\n\n" + "\n\n".join(parts)) if parts else "", meta
+
+
 def write_story(choice: dict, run_dir: Path) -> dict:
+    extra, meta = _extras(choice) if gemini.available() else ("", {})
     if gemini.available():
         prompt = f"""Напиши сценарий для YouTube Shorts (60 секунд озвучки) на русском языке.
 Тема: {choice['topic']}
@@ -86,18 +112,22 @@ def write_story(choice: dict, run_dir: Path) -> dict:
   диктор не умеет читать цифры. Без эмодзи, без хэштегов в тексте. Только кириллица, без латиницы.
 - Пиши для слуха: короткие фразы (до 12–14 слов), простые слова, без причастных и деепричастных оборотов,
   без скобок, кавычек-цитат на полстраницы, аббревиатур и сокращений (не «США», а «Америка»; не «т. е.»).
-- Используй букву «ё» везде, где она нужна.
+- Используй букву «ё» везде, где она нужна.{extra}
 
 Верни JSON:
 {{"title": "<цепляющее название до 60 символов, без хэштегов>",
   "hook": "<первое предложение истории>",
   "story": "<текст истории>",
   "description": "<1-2 предложения для описания видео>",
-  "hashtags": ["#тег1", "#тег2", "#тег3", "#тег4", "#тег5"]}}"""
+  "hashtags": ["#тег1", "#тег2", "#тег3", "#тег4", "#тег5"]{', "question": "<вопрос зрителю из конца истории>"' if meta.get("verdict") else ''}{', "reference_used": true' if meta.get("article") else ''}}}"""
         acceptable: list[dict] = []
 
         def validate(obj):
             problem = _validate(obj)
+            if not problem and meta.get("verdict"):
+                last = re.split(r"(?<=[.!?…])\s+", obj["story"].strip())[-1]
+                if not last.endswith("?"):
+                    problem = "последнее предложение должно быть вопросом зрителю и заканчиваться знаком «?»"
             if problem and _validate_relaxed(obj) is None:
                 acceptable.append(obj)  # запасной вариант на случай, если идеальный не получится
             return problem
@@ -117,6 +147,16 @@ def write_story(choice: dict, run_dir: Path) -> dict:
         data = dict(DEMO_STORY)
 
     data["story"] = " ".join(data["story"].split())
+    if meta.get("sources"):
+        src = list(meta["sources"])
+        if meta.get("article") and data.get("reference_used") is False:
+            src = [x for x in src if not x.startswith("Википедия")]  # справка оказалась не про эту тему
+        data["sources"] = src
+    if meta.get("rubric"):
+        data["rubric"] = meta["rubric"]["label"]
+    if meta.get("verdict") and not data.get("question"):
+        last = re.split(r"(?<=[.!?…])\s+", data["story"])[-1]
+        data["question"] = last if last.endswith("?") else ""
     data["topic"] = choice["topic"]
     data["word_count"] = count_words(data["story"])
     save_json(run_dir / "story.json", data)
