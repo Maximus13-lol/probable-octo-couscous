@@ -154,7 +154,7 @@ def _pick(board: dict, cands: list[dict], max_photos: int) -> list[dict]:
 Кандидаты — файлы Wikimedia Commons (номер: имя | описание | дата):
 {listing}
 
-Выбери от 2 до {max_photos} фото, которые изображают реальное место, человека, предмет, документ или событие
+Выбери от 3 до {max_photos} фото, которые изображают реальное место, человека, предмет, документ или событие
 именно из этой истории (не похожее, не «по мотивам» и не просто той же эпохи). Иллюстрации из статьи об этой
 истории почти всегда подходят — бери их в первую очередь. Для каждого фото — номер сцены, текст которой
 лучше всего с ним совпадает (не сцена 0; фото распредели по ролику, не ставь два в соседние сцены),
@@ -178,7 +178,7 @@ def _pick(board: dict, cands: list[dict], max_photos: int) -> list[dict]:
 
 
 def _autofill(board: dict, cands: list[dict], picks: list[dict], want: int) -> list[dict]:
-    """Если модель выбрала меньше двух фото, добавляет иллюстрации статьи по теме в свободные сцены
+    """Если модель выбрала меньше трёх фото, добавляет иллюстрации статьи по теме в свободные сцены
     равномерно по ролику (они заведомо про эту историю). Подпись — из описания файла, если оно короткое."""
     article = [c for c in cands if c.get("from_article") and c["file"] not in {p["file"] for p in picks}]
     if len(picks) >= want or not article:
@@ -245,7 +245,7 @@ def place_photos(board: dict, story: dict, topic_en: str, run_dir: Path, max_pho
         except Exception as exc:  # noqa: BLE001
             log.warning("Модель не выбрала фото (%s) — беру иллюстрации статьи", exc)
             picks = []
-        picks = _autofill(board, cands, picks, min(2, max_photos))
+        picks = _autofill(board, cands, picks, min(3, max_photos))
         img_dir = run_dir / "images"
         img_dir.mkdir(parents=True, exist_ok=True)
         used = []
