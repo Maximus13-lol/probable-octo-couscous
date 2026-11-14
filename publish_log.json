@@ -250,5 +250,21 @@
     "manual": false,
     "publish_at": "2026-11-14T16:00:00Z",
     "slot_date": "2026-11-14"
+  },
+  {
+    "date": "2026-11-14",
+    "run_id": "20261114_161247",
+    "video_id": "G_pftH6nWjw",
+    "url": "https://youtube.com/shorts/G_pftH6nWjw",
+    "title": "Куда пропал алмаз с болида Формулы один? #Shorts",
+    "topic": "Пропавший бриллиант стоимостью 500 000 долларов на болиде Формулы-1 после аварии в Монако в 2004 году",
+    "source": "reddit",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "21:00",
+    "cta_voice": null,
+    "manual": false,
+    "publish_at": "2026-11-14T18:00:00Z",
+    "slot_date": "2026-11-14"
   }
 ]
