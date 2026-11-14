@@ -26,14 +26,8 @@ def _plain(html: str) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html or "")).strip()
 
 
-def search(query: str, limit: int = 10) -> list[dict]:
-    r = requests.get(API, headers=UA, timeout=25, params={
-        "action": "query", "format": "json", "generator": "search", "gsrsearch": f"filetype:bitmap {query}",
-        "gsrnamespace": 6, "gsrlimit": limit, "prop": "imageinfo",
-        "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 1080})
-    r.raise_for_status()
+def _parse(pages: list[dict]) -> list[dict]:
     out = []
-    pages = list((r.json().get("query") or {}).get("pages", {}).values())
     for p in pages:
         ii = (p.get("imageinfo") or [{}])[0]
         md = ii.get("extmetadata") or {}
@@ -48,8 +42,49 @@ def search(query: str, limit: int = 10) -> list[dict]:
             "description": _plain(md.get("ImageDescription", {}).get("value", ""))[:220],
             "date": _plain(md.get("DateTimeOriginal", {}).get("value", ""))[:40],
         })
+    return out
+
+
+IINFO = {"prop": "imageinfo", "iiprop": "url|size|mime|extmetadata", "iiurlwidth": 1080}
+
+
+def search(query: str, limit: int = 10) -> list[dict]:
+    r = requests.get(API, headers=UA, timeout=25, params={
+        "action": "query", "format": "json", "generator": "search", "gsrsearch": f"filetype:bitmap {query}",
+        "gsrnamespace": 6, "gsrlimit": limit, **IINFO})
+    r.raise_for_status()
+    pages = list((r.json().get("query") or {}).get("pages", {}).values())
+    out = _parse(pages)
     log.info("Commons «%s»: найдено %d, подходит по лицензии и размеру %d", query, len(pages), len(out))
     return out
+
+
+def from_article(article: dict | None) -> list[dict]:
+    """Иллюстрации из статьи Википедии по теме — самые точные кандидаты (фото того самого места и людей).
+    Файлы, загруженные только в Википедию по «добросовестному использованию», на Commons отсутствуют и отсеиваются."""
+    if not article or not article.get("title"):
+        return []
+    try:
+        r = requests.get(f"https://{article.get('lang', 'ru')}.wikipedia.org/w/api.php", headers=UA, timeout=25,
+                         params={"action": "query", "format": "json", "titles": article["title"],
+                                 "prop": "images", "imlimit": 40, "redirects": 1})
+        r.raise_for_status()
+        files = [im["title"] for pg in (r.json().get("query") or {}).get("pages", {}).values()
+                 for im in pg.get("images", [])
+                 if re.search(r"\.(jpe?g|png)$", im["title"], re.I) and not re.search(r"(icon|logo|flag|commons-)", im["title"], re.I)]
+        if not files:
+            return []
+        files = ["File:" + f.split(":", 1)[1] for f in files[:40]]
+        r = requests.get(API, headers=UA, timeout=25, params={
+            "action": "query", "format": "json", "titles": "|".join(files), **IINFO})
+        r.raise_for_status()
+        pages = [p for p in (r.json().get("query") or {}).get("pages", {}).values() if "missing" not in p]
+        out = [{**c, "from_article": True} for c in _parse(pages)]
+        log.info("Статья «%s»: иллюстраций %d, на Commons со свободной лицензией %d", article["title"], len(files), len(out))
+        return out
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Иллюстрации статьи не получены: %s", exc)
+        return []
 
 
 def _queries(story: dict, topic_en: str) -> list[str]:
@@ -67,7 +102,8 @@ def _queries(story: dict, topic_en: str) -> list[str]:
 
 def _pick(board: dict, cands: list[dict], max_photos: int) -> list[dict]:
     scenes = "\n".join(f"{s['index']}: {s['text']}" for s in board["scenes"])
-    listing = "\n".join(f"{i}: {c['file']} | {c['description']} | {c['date']}" for i, c in enumerate(cands))
+    listing = "\n".join(f"{i}: {'[иллюстрация из статьи Википедии об этой истории] ' if c.get('from_article') else ''}"
+                        f"{c['file']} | {c['description']} | {c['date']}" for i, c in enumerate(cands))
     obj = gemini.generate_json(f"""Сцены ролика:
 {scenes}
 
@@ -128,6 +164,10 @@ def place_photos(board: dict, story: dict, topic_en: str, run_dir: Path, max_pho
     try:
         queries = _queries(story, topic_en)
         cands, seen = [], set()
+        for c in from_article(story.get("article")):  # сначала иллюстрации статьи-справки
+            if c["file"] not in seen:
+                seen.add(c["file"])
+                cands.append(c)
         for q in queries:
             for c in search(q):
                 if c["file"] not in seen:
