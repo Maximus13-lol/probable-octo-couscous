@@ -59,28 +59,72 @@ def search(query: str, limit: int = 10) -> list[dict]:
     return out
 
 
+def _commons_files(titles: list[str]) -> list[dict]:
+    """Метаданные файлов Commons (лицензия, автор, ссылка) пачками по 50; отсутствующие на Commons отсеиваются."""
+    out = []
+    titles = list(dict.fromkeys(titles))
+    for i in range(0, len(titles), 50):
+        r = requests.get(API, headers=UA, timeout=30, params={
+            "action": "query", "format": "json", "titles": "|".join(titles[i:i + 50]), **IINFO})
+        r.raise_for_status()
+        out += _parse([p for p in (r.json().get("query") or {}).get("pages", {}).values() if "missing" not in p])
+    return out
+
+
+_SKIP_FILE = re.compile(r"(icon|logo|flag|coat[_ ]of[_ ]arms|commons-|wikidata|symbol|signature|locator|blank)", re.I)
+
+
+def _wiki_page(lang: str, title: str) -> dict:
+    """Иллюстрации статьи, её Wikidata-элемент и название английской версии."""
+    r = requests.get(f"https://{lang}.wikipedia.org/w/api.php", headers=UA, timeout=25, params={
+        "action": "query", "format": "json", "titles": title, "redirects": 1,
+        "prop": "images|pageprops|langlinks", "imlimit": 50, "lllang": "en", "ppprop": "wikibase_item"})
+    r.raise_for_status()
+    pg = next(iter((r.json().get("query") or {}).get("pages", {}).values()), {})
+    files = [im["title"] for im in pg.get("images", [])
+             if re.search(r"\.(jpe?g|png)$", im["title"], re.I) and not _SKIP_FILE.search(im["title"])]
+    return {"files": ["File:" + f.split(":", 1)[1] for f in files],
+            "qid": (pg.get("pageprops") or {}).get("wikibase_item"),
+            "en": next((ll.get("*") for ll in pg.get("langlinks", []) if ll.get("lang") == "en"), None)}
+
+
+def _commons_category(qid: str | None) -> list[str]:
+    """Файлы из категории Commons, привязанной к теме в Wikidata (свойство P373)."""
+    if not qid:
+        return []
+    r = requests.get("https://www.wikidata.org/w/api.php", headers=UA, timeout=25, params={
+        "action": "wbgetentities", "format": "json", "ids": qid, "props": "claims"})
+    r.raise_for_status()
+    claims = (r.json().get("entities", {}).get(qid, {}) or {}).get("claims", {})
+    cat = next((c["mainsnak"]["datavalue"]["value"] for c in claims.get("P373", [])
+                if c.get("mainsnak", {}).get("datavalue")), None)
+    if not cat:
+        return []
+    r = requests.get(API, headers=UA, timeout=25, params={
+        "action": "query", "format": "json", "list": "categorymembers", "cmtitle": f"Category:{cat}",
+        "cmtype": "file", "cmlimit": 40})
+    r.raise_for_status()
+    return [m["title"] for m in (r.json().get("query") or {}).get("categorymembers", [])
+            if re.search(r"\.(jpe?g|png)$", m["title"], re.I) and not _SKIP_FILE.search(m["title"])]
+
+
 def from_article(article: dict | None) -> list[dict]:
-    """Иллюстрации из статьи Википедии по теме — самые точные кандидаты (фото того самого места и людей).
+    """Самые точные кандидаты: иллюстрации статьи-справки (ru и её en-версии) и категория Commons этой темы.
     Файлы, загруженные только в Википедию по «добросовестному использованию», на Commons отсутствуют и отсеиваются."""
     if not article or not article.get("title"):
         return []
     try:
-        r = requests.get(f"https://{article.get('lang', 'ru')}.wikipedia.org/w/api.php", headers=UA, timeout=25,
-                         params={"action": "query", "format": "json", "titles": article["title"],
-                                 "prop": "images", "imlimit": 40, "redirects": 1})
-        r.raise_for_status()
-        files = [im["title"] for pg in (r.json().get("query") or {}).get("pages", {}).values()
-                 for im in pg.get("images", [])
-                 if re.search(r"\.(jpe?g|png)$", im["title"], re.I) and not re.search(r"(icon|logo|flag|commons-)", im["title"], re.I)]
-        if not files:
-            return []
-        files = ["File:" + f.split(":", 1)[1] for f in files[:40]]
-        r = requests.get(API, headers=UA, timeout=25, params={
-            "action": "query", "format": "json", "titles": "|".join(files), **IINFO})
-        r.raise_for_status()
-        pages = [p for p in (r.json().get("query") or {}).get("pages", {}).values() if "missing" not in p]
-        out = [{**c, "from_article": True} for c in _parse(pages)]
-        log.info("Статья «%s»: иллюстраций %d, на Commons со свободной лицензией %d", article["title"], len(files), len(out))
+        info = _wiki_page(article.get("lang", "ru"), article["title"])
+        files = list(info["files"])
+        if info["en"] and article.get("lang") != "en":
+            files += _wiki_page("en", info["en"])["files"]
+        try:
+            files += _commons_category(info["qid"])
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Категория Commons не получена: %s", exc)
+        out = [{**c, "from_article": True} for c in _commons_files(files)] if files else []
+        log.info("Статья «%s»%s: файлов %d, со свободной лицензией на Commons %d", article["title"],
+                 f" (+ en «{info['en']}»)" if info["en"] else "", len(set(files)), len(out))
         return out
     except Exception as exc:  # noqa: BLE001
         log.warning("Иллюстрации статьи не получены: %s", exc)
@@ -110,10 +154,12 @@ def _pick(board: dict, cands: list[dict], max_photos: int) -> list[dict]:
 Кандидаты — файлы Wikimedia Commons (номер: имя | описание | дата):
 {listing}
 
-Выбери не больше {max_photos} фото, которые ТОЧНО изображают реальное место, человека, предмет или документ
-именно из этой истории (не похожее, не «по мотивам»). Для каждого — номер сцены, к которой оно подходит
-(не сцена 0), и короткую подпись по-русски (до 45 символов, например «Маяк на острове Эйлеан-Мор»).
-Каждая сцена — не больше одного фото. Если подходящих нет — верни пустой список.
+Выбери от 2 до {max_photos} фото, которые изображают реальное место, человека, предмет, документ или событие
+именно из этой истории (не похожее, не «по мотивам» и не просто той же эпохи). Иллюстрации из статьи об этой
+истории почти всегда подходят — бери их в первую очередь. Для каждого фото — номер сцены, текст которой
+лучше всего с ним совпадает (не сцена 0; фото распредели по ролику, не ставь два в соседние сцены),
+и короткую подпись по-русски (до 45 символов, например «Маяк на острове Эйлеан-Мор, 1900 год»).
+Каждая сцена — не больше одного фото. Если подходящих нет совсем — верни пустой список.
 Верни JSON: {{"photos": [{{"candidate": 0, "scene": 3, "caption": "..."}}]}}""", temperature=0.2)
     out, used_scenes = [], set()
     n_scenes = len(board["scenes"])
@@ -129,6 +175,24 @@ def _pick(board: dict, cands: list[dict], max_photos: int) -> list[dict]:
             used_scenes.add(si)
             out.append({**cands[ci], "scene": si, "caption": str(p.get("caption", ""))[:45]})
     return out[:max_photos]
+
+
+def _autofill(board: dict, cands: list[dict], picks: list[dict], want: int) -> list[dict]:
+    """Если модель выбрала меньше двух фото, добавляет иллюстрации статьи по теме в свободные сцены
+    равномерно по ролику (они заведомо про эту историю). Подпись — из описания файла, если оно короткое."""
+    article = [c for c in cands if c.get("from_article") and c["file"] not in {p["file"] for p in picks}]
+    if len(picks) >= want or not article:
+        return picks
+    n = len(board["scenes"])
+    taken = {p["scene"] for p in picks}
+    free = [i for i in range(2, n - 1) if i not in taken and i - 1 not in taken and i + 1 not in taken]
+    step = max(1, len(free) // max(1, want - len(picks)))
+    for c, si in zip(article, free[::step]):
+        if len(picks) >= want:
+            break
+        picks.append({**c, "scene": si, "caption": ""})
+        log.info("Архив: фото из статьи %s добавлено в сцену %d без подбора моделью", c["file"], si)
+    return picks
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont:
@@ -176,7 +240,12 @@ def place_photos(board: dict, story: dict, topic_en: str, run_dir: Path, max_pho
         log.info("Архив: запросы %s → %d подходящих по лицензии фото", queries, len(cands))
         if not cands:
             return []
-        picks = _pick(board, cands[:30], max_photos)
+        try:
+            picks = _pick(board, cands[:40], max_photos)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Модель не выбрала фото (%s) — беру иллюстрации статьи", exc)
+            picks = []
+        picks = _autofill(board, cands, picks, min(2, max_photos))
         img_dir = run_dir / "images"
         img_dir.mkdir(parents=True, exist_ok=True)
         used = []
