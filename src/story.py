@@ -152,6 +152,9 @@ def write_story(choice: dict, run_dir: Path) -> dict:
         if meta.get("article") and data.get("reference_used") is False:
             src = [x for x in src if not x.startswith("Википедия")]  # справка оказалась не про эту тему
         data["sources"] = src
+    if meta.get("article") and data.get("reference_used") is not False:
+        a = meta["article"]
+        data["article"] = {"title": a["title"], "lang": a["lang"], "url": a["url"]}
     if meta.get("rubric"):
         data["rubric"] = meta["rubric"]["label"]
     if meta.get("verdict") and not data.get("question"):
