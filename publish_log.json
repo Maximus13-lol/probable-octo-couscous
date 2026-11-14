@@ -234,5 +234,21 @@
     "manual": false,
     "publish_at": "2026-11-14T14:00:00Z",
     "slot_date": "2026-11-14"
+  },
+  {
+    "date": "2026-11-14",
+    "run_id": "20261114_142442",
+    "video_id": "pVv50qkUA4U",
+    "url": "https://youtube.com/shorts/pVv50qkUA4U",
+    "title": "Секреты путешествий во времени #Shorts",
+    "topic": "Признания информаторов о путешествиях во времени",
+    "source": "reddit",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "19:00",
+    "cta_voice": null,
+    "manual": false,
+    "publish_at": "2026-11-14T16:00:00Z",
+    "slot_date": "2026-11-14"
   }
 ]
