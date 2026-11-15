@@ -298,5 +298,21 @@
     "manual": false,
     "publish_at": "2026-11-15T16:00:00Z",
     "slot_date": "2026-11-15"
+  },
+  {
+    "date": "2026-11-15",
+    "run_id": "20261115_161213",
+    "video_id": "dpR_16A7Br0",
+    "url": "https://youtube.com/shorts/dpR_16A7Br0",
+    "title": "Загадка Кортелло: жуткая тайна #Shorts",
+    "topic": "Загадка Кортелло: неразгаданная тайна и странные совпадения",
+    "source": "google_trends",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "21:00",
+    "cta_voice": null,
+    "manual": false,
+    "publish_at": "2026-11-15T18:00:00Z",
+    "slot_date": "2026-11-15"
   }
 ]
