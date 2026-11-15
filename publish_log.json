@@ -266,5 +266,21 @@
     "manual": false,
     "publish_at": "2026-11-14T18:00:00Z",
     "slot_date": "2026-11-14"
+  },
+  {
+    "date": "2026-11-15",
+    "run_id": "20261115_121215",
+    "video_id": "wWMNSProbOg",
+    "url": "https://youtube.com/shorts/wWMNSProbOg",
+    "title": "Тайна озера скелетов в Гималаях #Shorts",
+    "topic": "Тайна озера скелетов Роопкунд в Гималаях",
+    "source": "youtube",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "17:00",
+    "cta_voice": null,
+    "manual": false,
+    "publish_at": "2026-11-15T14:00:00Z",
+    "slot_date": "2026-11-15"
   }
 ]
