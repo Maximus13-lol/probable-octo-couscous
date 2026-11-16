@@ -314,5 +314,21 @@
     "manual": false,
     "publish_at": "2026-11-15T18:00:00Z",
     "slot_date": "2026-11-15"
+  },
+  {
+    "date": "2026-11-16",
+    "run_id": "20261116_121707",
+    "video_id": "NFZwkuC0MAA",
+    "url": "https://youtube.com/shorts/NFZwkuC0MAA",
+    "title": "Исчезновение создателя кино #Shorts",
+    "topic": "Таинственное исчезновение Луи Ле Принса перед показом первого в мире фильма",
+    "source": "reddit",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "17:00",
+    "cta_voice": null,
+    "manual": false,
+    "publish_at": "2026-11-16T14:00:00Z",
+    "slot_date": "2026-11-16"
   }
 ]
