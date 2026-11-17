@@ -1,0 +1,39 @@
+name: Delete video
+
+on:
+  workflow_dispatch:
+    inputs:
+      video_id:
+        description: "ID ролика (из ссылки youtube.com/shorts/ID)"
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: pip install -q google-api-python-client google-auth requests
+      - name: Удалить ролик
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python -m src.yt_delete "${{ inputs.video_id }}"
+      - name: Отметить в журнале
+        run: |
+          git config user.name "shorts-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add publish_log.json
+          if git diff --cached --quiet; then exit 0; fi
+          git commit -m "chore: ролик удалён [skip ci]"
+          for i in 1 2 3; do git pull --rebase -q && git push && break; sleep $((i * 5)); done
