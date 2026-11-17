@@ -18,7 +18,7 @@ import time
 import traceback
 from zoneinfo import ZoneInfo
 
-from . import ads, archive, assemble, cta, human_voice, images, quality, narration, story, storyboard, trends, tts, uniqueness, upload
+from . import ads, archive, assemble, cover, cta, human_voice, images, quality, narration, story, storyboard, trends, tts, uniqueness, upload
 from .gemini import available as gemini_ok
 from .utils import OUTPUT_DIR, load_json, log, save_json, setup_logging
 
@@ -130,6 +130,14 @@ def run(args) -> int:
 
         t = step(7, "субтитры + сборка (MoviePy)")
         video = assemble.assemble(board, imgs, voice, run_dir, cta_audio=cta_audio, brand=quality.overlays(st))
+        cover_path = None
+        if quality.on("cover"):
+            try:
+                first_photo = min((p["scene"] for p in (load_json(run_dir / "archive_photos.json", default=[]) or [])),
+                                  default=None)
+                cover_path = cover.make_cover(st["title"], imgs, run_dir, st.get("rubric") or "", first_photo)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Обложка не сделана: %s", exc)
         done("assembly", t)
 
         t = step(8, "ad-inserter")
@@ -153,6 +161,8 @@ def run(args) -> int:
                 meta["privacy_status"] = os.environ["PRIVACY_OVERRIDE"]
             res = upload.upload(final, meta, run_dir)
             summary["upload"] = res
+            if cover_path:
+                summary["thumbnail"] = cover.set_thumbnail(res["video_id"], cover_path)
             upload.append_publish_log({
                 "date": dt.date.today().isoformat(), "run_id": run_id, "video_id": res["video_id"],
                 "url": res["url"], "title": meta["title"], "topic": choice["topic"],
@@ -160,6 +170,7 @@ def run(args) -> int:
                 "ad_campaign": ad_info["campaign"] if ad_info else None,
                 "slot": os.environ.get("SLOT") or None,
                 "cta_voice": (cta_audio or {}).get("source"),
+                "thumbnail": summary.get("thumbnail"), "rubric": st.get("rubric"),
                 "manual": os.environ.get("GUARD_SCHEDULED", "").lower() != "true", "publish_at": res.get("publish_at"),
                 "slot_date": dt.datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat(),
             })

@@ -28,7 +28,15 @@ DEFAULTS = {
     "subscribed_label": "ВЫ ПОДПИСАНЫ",
     "min_duration": 3.2,
     "dim": 0.45,
+    "mode": "after",      # after — отдельная концовка; overlay — поверх последних секунд истории
+    "lead": 2.4,          # overlay: за сколько секунд до конца истории начинается анимация
+    "tail_min": 0.8,      # overlay: минимальный хвост после последней фразы
 }
+
+# overlay: анимация уменьшается и поднимается в верхнюю часть кадра, чтобы не закрывать субтитры
+OVERLAY_CROP = (0, 450, VIDEO_W, 1480)   # область с заголовком, лайком и подпиской
+OVERLAY_SCALE = 0.72
+OVERLAY_TOP = 170
 
 # раскладка (кадр 1080x1920; выше нижней подписи Shorts и левее колонки кнопок)
 HEADLINE_Y = 600
@@ -198,8 +206,14 @@ def _with_alpha(im: Image.Image, a: float) -> Image.Image:
 
 
 def apply(frame: np.ndarray, t: float, cfg: dict | None = None) -> np.ndarray:
+    cfg = cfg or config()
     base = Image.fromarray(frame).convert("RGBA")
-    base.alpha_composite(render_overlay(t, cfg))
+    if cfg.get("mode") == "overlay":
+        ov = render_overlay(t, {**cfg, "dim": 0.0}).crop(OVERLAY_CROP)
+        ov = ov.resize((int(ov.width * OVERLAY_SCALE), int(ov.height * OVERLAY_SCALE)), Image.LANCZOS)
+        base.alpha_composite(ov, ((VIDEO_W - ov.width) // 2, OVERLAY_TOP))
+    else:
+        base.alpha_composite(render_overlay(t, cfg))
     return np.asarray(base.convert("RGB"))
 
 

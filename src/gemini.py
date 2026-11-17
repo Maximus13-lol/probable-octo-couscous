@@ -203,3 +203,26 @@ def generate_json(prompt: str, temperature: float = 0.8, validate=None, attempts
         log.warning("Ответ Gemini не прошёл проверку (попытка %d): %s", i, problem)
         feedback = f"\n\nПредыдущий ответ отклонён: {problem}. Исправь и верни JSON заново."
     raise GeminiError("Gemini не дал корректный ответ за отведённые попытки")
+
+
+def vision_json(prompt: str, image: bytes, mime: str = "image/jpeg"):
+    """Проверка картинки моделью Gemini (видит изображение). Возвращает JSON-ответ или бросает GeminiError."""
+    import base64
+    key = env("GEMINI_API_KEY")
+    if not key:
+        raise GeminiError("GEMINI_API_KEY не задан — проверить фото нечем")
+    body = {"contents": [{"role": "user", "parts": [
+        {"inline_data": {"mime_type": mime, "data": base64.b64encode(image).decode()}}, {"text": prompt}]}],
+        "generationConfig": {"temperature": 0.1, "responseMimeType": "application/json"}}
+    last: Exception | None = None
+    for model in _models()[:4]:
+        try:
+            r = requests.post(API_URL.format(model=model), params={"key": key}, json=body, timeout=CALL_TIMEOUT)
+            if r.status_code != 200:
+                last = GeminiError(f"{model}: HTTP {r.status_code}")
+                continue
+            parts = r.json()["candidates"][0]["content"]["parts"]
+            return _extract_json("".join(p.get("text", "") for p in parts if not p.get("thought")))
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+    raise GeminiError(f"проверка изображения не удалась: {last}")

@@ -99,10 +99,22 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
     # --- концовка «лайк и подписка»: после последней фразы, поверх последнего кадра
     cta_cfg = cta.config()
     cta_start = None
+    subs_end = None          # где заканчиваются субтитры (голос концовки без субтитров)
+    cta_voice_at = None
+    speech_end = total - TAIL
     if cta_cfg.get("enabled"):
-        cta_start = total - TAIL + 0.45
         voice_len = (cta_audio or {}).get("duration", 0.0)
-        total = cta_start + max(float(cta_cfg["min_duration"]), voice_len + 0.25 + 0.6)
+        if cta_cfg.get("mode") == "overlay":
+            # анимация поверх последних секунд истории, голос — сразу после последней фразы, хвост короткий
+            cta_start = max(0.0, speech_end - float(cta_cfg.get("lead", 2.4)))
+            cta_voice_at = speech_end + 0.1
+            total = speech_end + max(float(cta_cfg.get("tail_min", 0.8)), voice_len + 0.1 + 0.35)
+            subs_end = speech_end + 0.05
+        else:
+            cta_start = total - TAIL + 0.45
+            cta_voice_at = cta_start + 0.25
+            total = cta_start + max(float(cta_cfg["min_duration"]), voice_len + 0.25 + 0.6)
+            subs_end = cta_start
     log.info("Длительность ролика: %.1f с (история %.1f с + концовка), сцен: %d", total, story_end, n)
 
     # --- видео-слой: одна функция кадра (Ken Burns + crossfade + субтитры) — в разы быстрее,
@@ -114,7 +126,7 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
         spans.append((begin, end, ken_burns_fn(img, end - begin, i)))
 
     subs = []
-    for ev in build_subtitles(board, tts, starts, cta_start or total, run_dir):
+    for ev in build_subtitles(board, tts, starts, subs_end or total, run_dir):
         rgba = ev.image
         h = rgba.shape[0]
         ys = CENTER_Y - h // 2
@@ -154,7 +166,7 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
     # --- звук: озвучка + музыка
     voice = [AudioFileClip(a["path"]).with_start(t0) for a, t0 in zip(tts, starts)]
     if cta_start is not None and cta_audio and cta_audio.get("path"):
-        voice.append(AudioFileClip(cta_audio["path"]).with_start(cta_start + 0.25))
+        voice.append(AudioFileClip(cta_audio["path"]).with_start(cta_voice_at))
     music_path = pick_music(run_dir, total)
     music = AudioFileClip(str(music_path))
     if music.duration < total:
