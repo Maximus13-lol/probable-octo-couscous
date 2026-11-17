@@ -416,5 +416,23 @@
     "manual": false,
     "publish_at": "2026-11-17T14:00:00Z",
     "slot_date": "2026-11-17"
+  },
+  {
+    "date": "2026-11-17",
+    "run_id": "20261117_141628",
+    "video_id": "PlkIl_YvYco",
+    "url": "https://youtube.com/shorts/PlkIl_YvYco",
+    "title": "Тайна исчезновения Эдвина Роза в Шотландии #Shorts",
+    "topic": "Таинственная смерть Эдвина Роза на горе в Шотландии в 1889 году",
+    "source": "reddit",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "19:00",
+    "cta_voice": null,
+    "thumbnail": "канал не подтверждён по телефону — свои обложки недоступны (youtube.com/verify)",
+    "rubric": "ТАЙНА",
+    "manual": false,
+    "publish_at": "2026-11-17T16:00:00Z",
+    "slot_date": "2026-11-17"
   }
 ]
