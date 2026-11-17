@@ -159,7 +159,9 @@ def _pick(board: dict, cands: list[dict], max_photos: int) -> list[dict]:
 истории почти всегда подходят — бери их в первую очередь. Для каждого фото — номер сцены, текст которой
 лучше всего с ним совпадает (не сцена 0; фото распредели по ролику, не ставь два в соседние сцены),
 и короткую подпись по-русски (до 45 символов, например «Маяк на острове Эйлеан-Мор, 1900 год»).
-Каждая сцена — не больше одного фото. Если подходящих нет совсем — верни пустой список.
+Каждая сцена — не больше одного фото. НЕ бери два изображения одного и того же объекта (одна картина,
+одно здание, один человек — только один раз, даже если файлы разные: копии, репродукции, фото разных лет).
+Если подходящих нет совсем — верни пустой список.
 Верни JSON: {{"photos": [{{"candidate": 0, "scene": 3, "caption": "..."}}]}}""", temperature=0.2)
     out, used_scenes = [], set()
     n_scenes = len(board["scenes"])
@@ -195,6 +197,15 @@ def _autofill(board: dict, cands: list[dict], picks: list[dict], want: int) -> l
     return picks
 
 
+def _subject_key(text: str) -> frozenset:
+    words = re.findall(r"[а-яёa-z0-9]+", (text or "").lower().replace("ё", "е"))
+    return frozenset(w[:5] for w in words if len(w) > 2)
+
+
+def _same_subject(a: frozenset, b: frozenset) -> bool:
+    return bool(a and b) and len(a & b) / min(len(a), len(b)) >= 0.6
+
+
 def verify(p: dict, image: bytes, board: dict, story: dict) -> tuple[bool, str, str]:
     """Проверка фото моделью, которая видит изображение: относится ли оно к этой истории и сцене,
     и не подписан ли человек чужим именем. Подпись — только из того, что подтверждают описание файла
@@ -215,7 +226,9 @@ def verify(p: dict, image: bytes, board: dict, story: dict) -> tuple[bool, str, 
    Если есть сомнение — relevant=false.
 3. caption — подпись по-русски до 45 символов ТОЛЬКО из того, что подтверждают описание файла и само фото
    (кто/что и год, если известен). Ничего не придумывай; если подтвердить нечего — пустая строка.
-Верни JSON: {{"relevant": true/false, "person_ok": true/false/null, "caption": "...", "reason": "<кратко>"}}"""
+4. subject — что именно изображено, 2–5 слов по-русски в именительном падеже (например «картина Сатурн Гойи»,
+   «дом Квинта дель Сордо»): по нему отсекаются повторы одного объекта.
+Верни JSON: {{"relevant": true/false, "person_ok": true/false/null, "caption": "...", "subject": "...", "reason": "<кратко>"}}"""
     try:
         mime = "image/png" if p["url"].lower().endswith(".png") else "image/jpeg"
         obj = gemini.vision_json(prompt, image, mime)
@@ -224,7 +237,14 @@ def verify(p: dict, image: bytes, board: dict, story: dict) -> tuple[bool, str, 
     if isinstance(obj, list):
         obj = obj[0] if obj and isinstance(obj[0], dict) else {}
     ok = bool(obj.get("relevant")) and obj.get("person_ok") is not False
+    p["subject"] = str(obj.get("subject") or obj.get("caption") or p.get("file", ""))
     return ok, str(obj.get("caption") or "")[:45], str(obj.get("reason") or "")[:160]
+
+
+def _is_repeat(p: dict, used: list[dict]) -> bool:
+    """Тот же объект уже есть в ролике (та же картина/здание/человек, другой файл)."""
+    key = _subject_key(p.get("subject", ""))
+    return any(_same_subject(key, _subject_key(u.get("subject", ""))) for u in used)
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont:
@@ -289,6 +309,9 @@ def place_photos(board: dict, story: dict, topic_en: str, run_dir: Path, max_pho
                 if not ok:
                     log.warning("Архив: фото %s отклонено проверкой — %s", p["file"], why)
                     continue
+                if _is_repeat(p, used):
+                    log.warning("Архив: фото %s — повтор объекта «%s», пропускаю", p["file"], p.get("subject"))
+                    continue
                 p["caption"] = caption
                 img = Image.open(io.BytesIO(r.content))
                 img.load()
@@ -310,6 +333,9 @@ def place_photos(board: dict, story: dict, topic_en: str, run_dir: Path, max_pho
                     ok, caption, why = verify(p, r.content, board, story)
                     if not ok:
                         log.warning("Архив: запасное фото %s отклонено — %s", p["file"], why)
+                        continue
+                    if _is_repeat(p, used):
+                        log.warning("Архив: запасное фото %s — повтор объекта «%s»", p["file"], p.get("subject"))
                         continue
                     p["caption"] = caption
                     img = Image.open(io.BytesIO(r.content))
