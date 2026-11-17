@@ -362,5 +362,23 @@
     "manual": false,
     "publish_at": "2026-11-16T18:00:00Z",
     "slot_date": "2026-11-16"
+  },
+  {
+    "date": "2026-11-17",
+    "run_id": "20261117_075537",
+    "video_id": "rvqaU2gu0_c",
+    "url": "https://youtube.com/shorts/rvqaU2gu0_c",
+    "title": "Тайна мрачной фрески Гойи #Shorts",
+    "topic": "Тайна скрытой фрески Гойи «Сатурн, пожирающий своего сына»",
+    "source": "reddit",
+    "privacy": "public",
+    "ad_campaign": null,
+    "slot": null,
+    "cta_voice": null,
+    "thumbnail": "канал не подтверждён по телефону — свои обложки недоступны (youtube.com/verify)",
+    "rubric": "ТАЙНА",
+    "manual": true,
+    "publish_at": null,
+    "slot_date": "2026-11-17"
   }
 ]
