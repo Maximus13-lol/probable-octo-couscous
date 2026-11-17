@@ -92,6 +92,10 @@ def env(name: str, default: str | None = None) -> str | None:
 def find_font(bold: bool = True) -> str:
     """Ищет жирный шрифт с кириллицей: assets/fonts → Montserrat → DejaVu."""
     candidates: list[Path] = []
+    if env("FONT"):
+        candidates.append(Path(env("FONT")))
+    # Montserrat Black — самый ходовой шрифт субтитров Reels/Shorts (OFL, с кириллицей)
+    candidates.append(ROOT / "assets" / "fonts" / "Montserrat-Black.ttf")
     candidates += sorted((ROOT / "assets" / "fonts").glob("*.[ot]tf"))
     for base in ("/usr/share/fonts", "/usr/local/share/fonts", str(Path.home() / ".fonts")):
         b = Path(base)

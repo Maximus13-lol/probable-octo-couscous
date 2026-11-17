@@ -195,6 +195,38 @@ def _autofill(board: dict, cands: list[dict], picks: list[dict], want: int) -> l
     return picks
 
 
+def verify(p: dict, image: bytes, board: dict, story: dict) -> tuple[bool, str, str]:
+    """Проверка фото моделью, которая видит изображение: относится ли оно к этой истории и сцене,
+    и не подписан ли человек чужим именем. Подпись — только из того, что подтверждают описание файла
+    и само изображение. Нет возможности проверить — фото не используется."""
+    scene = next((s["text"] for s in board["scenes"] if s["index"] == p["scene"]), "")
+    prompt = f"""Ты фоторедактор документального ролика. Проверь архивное фото.
+История ролика: {story.get('title', '')}. {story.get('story', '')[:900]}
+Сцена, куда ставится фото: «{scene}»
+Файл Wikimedia Commons: {p['file']}
+Описание файла: {p.get('description') or '—'}
+Дата: {p.get('date') or '—'}
+Предложенная подпись: «{p.get('caption') or ''}»
+
+Ответь строго:
+1. relevant — фото действительно показывает место, человека, предмет, документ или событие ИМЕННО из этой
+   истории (не похожее, не другой человек с тем же именем, не просто та же эпоха)?
+2. Если на фото человек — подтверждают ли имя файла и описание, что это именно тот человек из истории?
+   Если есть сомнение — relevant=false.
+3. caption — подпись по-русски до 45 символов ТОЛЬКО из того, что подтверждают описание файла и само фото
+   (кто/что и год, если известен). Ничего не придумывай; если подтвердить нечего — пустая строка.
+Верни JSON: {{"relevant": true/false, "person_ok": true/false/null, "caption": "...", "reason": "<кратко>"}}"""
+    try:
+        mime = "image/png" if p["url"].lower().endswith(".png") else "image/jpeg"
+        obj = gemini.vision_json(prompt, image, mime)
+    except Exception as exc:  # noqa: BLE001
+        return False, "", f"не удалось проверить ({exc})"
+    if isinstance(obj, list):
+        obj = obj[0] if obj and isinstance(obj[0], dict) else {}
+    ok = bool(obj.get("relevant")) and obj.get("person_ok") is not False
+    return ok, str(obj.get("caption") or "")[:45], str(obj.get("reason") or "")[:160]
+
+
 def _font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(find_font(), size)
 
@@ -253,13 +285,40 @@ def place_photos(board: dict, story: dict, topic_en: str, run_dir: Path, max_pho
             try:
                 r = requests.get(p["url"], headers=UA, timeout=60)
                 r.raise_for_status()
+                ok, caption, why = verify(p, r.content, board, story)
+                if not ok:
+                    log.warning("Архив: фото %s отклонено проверкой — %s", p["file"], why)
+                    continue
+                p["caption"] = caption
                 img = Image.open(io.BytesIO(r.content))
                 img.load()
-                render(img, p["caption"]).save(img_dir / f"scene_{p['scene']:02d}.jpg", quality=93)
+                render(img, caption).save(img_dir / f"scene_{p['scene']:02d}.jpg", quality=93)
                 used.append(p)
-                log.info("Архивное фото в сцене %d: %s (%s, %s)", p["scene"], p["file"], p["artist"], p["license"])
+                log.info("Архивное фото в сцене %d: %s (%s, %s) — «%s»", p["scene"], p["file"], p["artist"],
+                         p["license"], caption)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Фото %s не загрузилось: %s", p["file"], exc)
+        # проверка часть фото отклонила — добираем из статьи (тоже с проверкой), максимум 4 попытки
+        if len(used) < min(3, max_photos):
+            tried = {p["file"] for p in picks}
+            spare = [c for c in cands if c.get("from_article") and c["file"] not in tried][:4]
+            more = _autofill(board, spare, [dict(u) for u in used], min(3, max_photos))
+            for p in [m for m in more if m["file"] not in {u["file"] for u in used}]:
+                try:
+                    r = requests.get(p["url"], headers=UA, timeout=60)
+                    r.raise_for_status()
+                    ok, caption, why = verify(p, r.content, board, story)
+                    if not ok:
+                        log.warning("Архив: запасное фото %s отклонено — %s", p["file"], why)
+                        continue
+                    p["caption"] = caption
+                    img = Image.open(io.BytesIO(r.content))
+                    img.load()
+                    render(img, caption).save(img_dir / f"scene_{p['scene']:02d}.jpg", quality=93)
+                    used.append(p)
+                    log.info("Архивное фото (запасное) в сцене %d: %s — «%s»", p["scene"], p["file"], caption)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Фото %s не загрузилось: %s", p["file"], exc)
         save_json(run_dir / "archive_photos.json", used)
         return used
     except Exception as exc:  # noqa: BLE001

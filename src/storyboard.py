@@ -8,7 +8,7 @@ from . import gemini
 from .demo import DEMO_STORY, DEMO_STORYBOARD
 from .utils import log, save_json
 
-MIN_SCENES, MAX_SCENES = 8, 12
+MIN_SCENES, MAX_SCENES = 10, 13   # при 45–50 с — смена кадра каждые 3–5 с
 
 
 def _norm(s: str) -> str:
