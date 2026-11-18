@@ -41,6 +41,11 @@ def make_script(args, run_dir, summary, done):
         t = step(2, "story-writer")
         st = story.write_story(choice, run_dir)
         done("story-writer", t)
+        bad = None if args.topic else quality.unsafe_topic(f"{choice['topic']} {st.get('title', '')} {st['story']}")
+        if bad:
+            log.warning("Тема «%s» отклонена фильтром безопасности: %s", choice["topic"], bad)
+            rejected.append(choice["topic"])
+            continue
         sim = uniqueness.similar_story(st["story"], trends.load_used_topics())
         if not sim or args.topic or not gemini_ok():
             break
@@ -109,6 +114,11 @@ def run(args) -> int:
         else:
             choice, st, board, narr = make_script(args, run_dir, summary, done)
 
+        case_no = quality.case_number()
+        if case_no:  # сериал «Папка №13»: каждый ролик — «Дело №N»
+            st["case"] = case_no
+            summary["case"] = case_no
+
         t = step(5, "картинки (архивные фото + Pollinations)")
         if quality.on("archive_photos"):
             used_photos = archive.place_photos(board, st, choice.get("topic_en", choice["topic"]), run_dir,
@@ -135,7 +145,8 @@ def run(args) -> int:
             try:
                 first_photo = min((p["scene"] for p in (load_json(run_dir / "archive_photos.json", default=[]) or [])),
                                   default=None)
-                cover_path = cover.make_cover(st["title"], imgs, run_dir, st.get("rubric") or "", first_photo)
+                label = (f"ДЕЛО №{st['case']}" if st.get("case") else "") or (st.get("rubric") or "")
+                cover_path = cover.make_cover(st["title"], imgs, run_dir, label, first_photo)
             except Exception as exc:  # noqa: BLE001
                 log.warning("Обложка не сделана: %s", exc)
         done("assembly", t)
@@ -170,7 +181,7 @@ def run(args) -> int:
                 "ad_campaign": ad_info["campaign"] if ad_info else None,
                 "slot": os.environ.get("SLOT") or None,
                 "cta_voice": (cta_audio or {}).get("source"),
-                "thumbnail": summary.get("thumbnail"), "rubric": st.get("rubric"),
+                "thumbnail": summary.get("thumbnail"), "rubric": st.get("rubric"), "case": st.get("case"),
                 "manual": os.environ.get("GUARD_SCHEDULED", "").lower() != "true", "publish_at": res.get("publish_at"),
                 "slot_date": dt.datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat(),
             })

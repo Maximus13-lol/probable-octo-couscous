@@ -54,6 +54,8 @@ def build_metadata(story: dict, ad_info: dict | None, music_credit: str | None =
     tpl = templates()
     title_tpl = tpl.get("title_template", "{title} #Shorts")
     base = story["title"].strip().rstrip(".")
+    if story.get("case"):
+        base = f"Дело №{story['case']}: {base}"
     title = title_tpl.format(title=base)
     if len(title) > MAX_TITLE:
         room = MAX_TITLE - len(title_tpl.format(title=""))
@@ -67,6 +69,8 @@ def build_metadata(story: dict, ad_info: dict | None, music_credit: str | None =
         hashtags=" ".join(hashtags), music_credit=music_credit or tpl.get("music_credit_default", ""),
     )
     extra = []
+    if story.get("case"):
+        desc = f"🗂 Дело №{story['case']} из «Папки №13»\n\n" + desc
     if story.get("question"):
         extra.append("💬 " + story["question"] + " Пишите в комментариях!")
     if story.get("sources"):

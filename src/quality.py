@@ -2,7 +2,9 @@
 оформление канала. Включаются в config/quality.json или для пробного ролика (PILOT=true)."""
 from __future__ import annotations
 
-from .utils import CONFIG_DIR, USED_TOPICS_FILE, env, load_json
+import re
+
+from .utils import CONFIG_DIR, PUBLISH_LOG_FILE, USED_TOPICS_FILE, env, load_json
 
 DEFAULT_RUBRICS = [
     {"id": "mystery", "label": "ТАЙНА",
@@ -75,4 +77,31 @@ def overlays(story: dict) -> dict | None:
     """Что рисовать поверх ролика: водяной знак канала и плашку рубрики в первые секунды."""
     if not on("branding"):
         return None
-    return {"channel": channel_name(), "rubric": story.get("rubric") or ""}
+    label = story.get("rubric") or ""
+    if story.get("case"):
+        label = f"ДЕЛО №{story['case']}" + (f" · {label}" if label else "")
+    return {"channel": channel_name(), "rubric": label}
+
+
+def case_number() -> int | None:
+    """Номер «дела» для сериала «Папка №13»: последний выданный номер + 1 (нумерация с 1, с запуска сериала)."""
+    if not on("series"):
+        return None
+    log = load_json(PUBLISH_LOG_FILE, default=[]) or []
+    return max((int(e["case"]) for e in log if e.get("case") and not e.get("deleted")), default=0) + 1
+
+
+_CHILD = re.compile(r"\b(реб[её]н|дет(и|ей|ям|ск)|девочк|мальчик|школьни|подрост|младен|малыш|child|girl|boy|kid|teen)", re.I)
+_ADULT = re.compile(r"(муж|жен[аыуе]\b|любов|роман|свадьб|секс|интим|beloved|husband|wife|marri|romanc|sex)", re.I)
+_HARM = re.compile(r"(убий|убит|убил|погиб|насил|изнасил|пыт|самоуб|расчлен|каннибал|теракт|казн|murder|kill|rape|abuse|suicide|tortur)", re.I)
+
+
+def unsafe_topic(text: str) -> str | None:
+    """Сюжеты, которые YouTube режет почти до нуля показов: дети во «взрослом» контексте или рядом с насилием,
+    подробности убийств и насилия. Возвращает причину или None."""
+    t = text or ""
+    if _CHILD.search(t) and (_ADULT.search(t) or _HARM.search(t)):
+        return "ребёнок во «взрослом» контексте или рядом с насилием"
+    if len(_HARM.findall(t)) >= 3:
+        return "много насилия и смертей в тексте"
+    return None
