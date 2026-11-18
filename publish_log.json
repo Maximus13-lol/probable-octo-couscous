@@ -452,5 +452,23 @@
     "manual": false,
     "publish_at": "2026-11-17T18:00:00Z",
     "slot_date": "2026-11-17"
+  },
+  {
+    "date": "2026-11-18",
+    "run_id": "20261118_141615",
+    "video_id": "IvzDUWZPJcE",
+    "url": "https://youtube.com/shorts/IvzDUWZPJcE",
+    "title": "Куда исчезла легендарная Янтарная комната? #Shorts",
+    "topic": "Янтарная комната: куда пропал главный шедевр и сокровище Третьего рейха",
+    "source": "youtube",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "19:00",
+    "cta_voice": null,
+    "thumbnail": "канал не подтверждён по телефону — свои обложки недоступны (youtube.com/verify)",
+    "rubric": "ПРАВДА ИЛИ МИФ",
+    "manual": false,
+    "publish_at": "2026-11-18T16:00:00Z",
+    "slot_date": "2026-11-18"
   }
 ]
