@@ -56,6 +56,8 @@ def build_metadata(story: dict, ad_info: dict | None, music_credit: str | None =
     base = story["title"].strip().rstrip(".")
     if story.get("case"):
         base = f"Дело №{story['case']}: {base}"
+    elif story.get("title_prefix"):
+        base = f"{story['title_prefix']}: {base}"
     title = title_tpl.format(title=base)
     if len(title) > MAX_TITLE:
         room = MAX_TITLE - len(title_tpl.format(title=""))

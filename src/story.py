@@ -12,6 +12,7 @@ from .uniqueness import stems
 from .utils import USED_TOPICS_FILE, log, save_json
 
 MIN_WORDS, MAX_WORDS = 100, 120   # ≈45–50 с озвучки: короче — выше досмотр
+SECONDS = "45–50"                 # длительность для промпта; утренние форматы меняют (formats.py)
 WORD_RE = re.compile(r"[\wЁё]+(?:[-’'][\wЁё]+)*", re.U)
 
 
@@ -70,6 +71,11 @@ def _validate(obj) -> str | None:
     return None
 
 
+MID_HOOK = """- Примерно в середине (после 45–60 слов) — одна короткая фраза-крючок, которая удерживает зрителя
+  («Но самое странное нашли потом.», «И тут всё пошло не так.»).
+"""
+
+
 def _extras(choice: dict) -> tuple[str, dict]:
     """Доп. требования к истории: справка-факты, рубрика, вывод от лица канала и вопрос зрителю."""
     parts, meta = [], {}
@@ -82,7 +88,11 @@ def _extras(choice: dict) -> tuple[str, dict]:
                          "Не выдумывай деталей, которых нет в справке или в общеизвестных источниках. Если справка "
                          "НЕ про эту тему — не используй её и верни reference_used=false:\n\"\"\"" +
                          art["extract"][:3500] + "\"\"\"")
-    rub = quality.rubric()
+    fmt = choice.get("format_spec")
+    if fmt:  # утренняя рубрика: свой формат вместо обычной рубрики
+        parts.append(fmt["prompt"].format(date=choice.get("date_ru", ""), year=choice.get("year", "")))
+        meta["rubric"] = {"label": fmt["label"], "prompt": ""}
+    rub = None if fmt else quality.rubric()
     if rub:
         meta["rubric"] = rub
         parts.append(f"Формат ролика — рубрика «{rub['label']}»: {rub['prompt']}")
@@ -98,7 +108,7 @@ def _extras(choice: dict) -> tuple[str, dict]:
 def write_story(choice: dict, run_dir: Path) -> dict:
     extra, meta = _extras(choice) if gemini.available() else ("", {})
     if gemini.available():
-        prompt = f"""Напиши сценарий для YouTube Shorts (45–50 секунд озвучки) на русском языке.
+        prompt = f"""Напиши сценарий для YouTube Shorts ({SECONDS} секунд озвучки) на русском языке.
 Тема: {choice['topic']}
 {('Идея хука: ' + choice['hook']) if choice.get('hook') else ''}
 
@@ -106,9 +116,7 @@ def write_story(choice: dict, run_dir: Path) -> dict:
 - {MIN_WORDS}–{MAX_WORDS} слов, ровно один сплошной текст без заголовков и ремарок.
 - Первое предложение — короткий хук-вопрос (до 12 слов), загадка, которая цепляет за 3 секунды.
 - Дальше — напряжённое повествование короткими предложениями, конкретные детали, даты, места.
-- Примерно в середине (после 45–60 слов) — одна короткая фраза-крючок, которая удерживает зрителя
-  («Но самое странное нашли потом.», «И тут всё пошло не так.»).
-- В конце — развязка без затягивания: ответ или самая правдоподобная версия.
+{MID_HOOK if MAX_WORDS >= 90 else ""}- В конце — развязка без затягивания: ответ или самая правдоподобная версия.
 - Последняя фраза должна перекликаться с хуком-вопросом из начала, чтобы ролик хотелось пересмотреть
   по кругу (зацикливание): например, вернуть тот же вопрос в новом свете.
 - Только факты и общепринятые версии, без выдумок о реальных людях; без жестокости.
