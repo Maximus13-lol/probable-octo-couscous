@@ -6,7 +6,8 @@
     "rubrics": true,
     "archive_photos": true,
     "branding": true,
-    "cover": true
+    "cover": true,
+    "series": true
   },
   "max_archive_photos": 4,
   "branding": {
