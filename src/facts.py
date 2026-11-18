@@ -37,7 +37,8 @@ def _titles(choice: dict) -> list[tuple[str, str]]:
 
 def lookup(choice: dict) -> dict | None:
     """Статья ru-Википедии по теме, иначе en-Википедии. None — если ничего подходящего."""
-    for lang, q in _titles(choice) + [("ru", choice.get("topic", "")), ("en", choice.get("topic_en", ""))]:
+    first = [(choice.get("wiki_lang", "en"), choice["wiki_title"])] if choice.get("wiki_title") else []
+    for lang, q in first + _titles(choice) + [("ru", choice.get("topic", "")), ("en", choice.get("topic_en", ""))]:
         if not q:
             continue
         try:

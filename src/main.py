@@ -18,7 +18,7 @@ import time
 import traceback
 from zoneinfo import ZoneInfo
 
-from . import ads, archive, assemble, cover, cta, human_voice, images, quality, narration, story, storyboard, trends, tts, uniqueness, upload
+from . import ads, archive, assemble, cover, cta, formats, human_voice, images, quality, narration, story, storyboard, trends, tts, uniqueness, upload
 from .gemini import available as gemini_ok
 from .utils import OUTPUT_DIR, load_json, log, save_json, setup_logging
 
@@ -35,7 +35,19 @@ def make_script(args, run_dir, summary, done):
     rejected: list[str] = []
     for attempt in range(1, 4):
         t = step(1, "trend-scout" + (f" (попытка {attempt})" if attempt > 1 else ""))
-        choice = trends.scout(run_dir, forced_topic=args.topic, exclude=rejected)
+        fmt = formats.current()
+        spec = formats.spec(fmt)
+        if spec and not args.topic:  # утренняя рубрика: своя тема, длина и раскадровка
+            story.MIN_WORDS, story.MAX_WORDS = spec["words"]
+            story.RELAXED_MIN_WORDS, story.RELAXED_MAX_WORDS = spec["relaxed"]
+            story.SECONDS = spec["seconds"]
+            storyboard.MIN_SCENES, storyboard.MAX_SCENES = spec["scenes"]
+            choice = formats.topic(fmt, rejected)
+            choice["format_spec"] = spec
+            log.info("Утренняя рубрика «%s»: %s", spec["label"], choice["topic"])
+        else:
+            choice = trends.scout(run_dir, forced_topic=args.topic, exclude=rejected)
+        choice["format"] = fmt
         done("trend-scout", t)
 
         t = step(2, "story-writer")
@@ -114,7 +126,12 @@ def run(args) -> int:
         else:
             choice, st, board, narr = make_script(args, run_dir, summary, done)
 
-        case_no = quality.case_number()
+        case_no = quality.case_number() if choice.get("format", "case") == "case" else None
+        if choice.get("format") == "this_day":
+            st["title_prefix"] = choice.get("date_ru", "").capitalize()
+            st["rubric"] = f"ЭТОТ ДЕНЬ · {choice.get('date_ru', '').upper()}"
+        elif choice.get("format") == "myth20":
+            st["title_prefix"] = "Правда или миф"
         if case_no:  # сериал «Папка №13»: каждый ролик — «Дело №N»
             st["case"] = case_no
             summary["case"] = case_no
@@ -122,7 +139,8 @@ def run(args) -> int:
         t = step(5, "картинки (архивные фото + Pollinations)")
         if quality.on("archive_photos"):
             used_photos = archive.place_photos(board, st, choice.get("topic_en", choice["topic"]), run_dir,
-                                               int(quality.config().get("max_archive_photos", 2)))
+                                               min(int(quality.config().get("max_archive_photos", 2)),
+                                                   max(1, len(board["scenes"]) // 2)))
             st["photo_credits"] = archive.credits(used_photos)
             summary["archive_photos"] = len(used_photos)
         imgs = images.generate_images(board, run_dir)
