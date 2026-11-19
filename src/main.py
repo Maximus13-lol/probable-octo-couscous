@@ -200,6 +200,7 @@ def run(args) -> int:
                 "slot": os.environ.get("SLOT") or None,
                 "cta_voice": (cta_audio or {}).get("source"),
                 "thumbnail": summary.get("thumbnail"), "rubric": st.get("rubric"), "case": st.get("case"),
+                "question": st.get("question") or None,
                 "manual": os.environ.get("GUARD_SCHEDULED", "").lower() != "true", "publish_at": res.get("publish_at"),
                 "slot_date": dt.datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat(),
             })

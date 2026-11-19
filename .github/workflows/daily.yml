@@ -74,6 +74,21 @@ jobs:
           pip install -q google-api-python-client google-auth requests
           python -m src.schedule_guard
 
+      - name: Комментарий с вопросом под вышедшими роликами
+        continue-on-error: true
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          python -m src.comments
+          if ! git diff --quiet publish_log.json; then
+            git config user.name "shorts-bot"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add publish_log.json && git commit -qm "chore: комментарии под роликами [skip ci]"
+            for i in 1 2 3; do git pull --rebase -q && git push -q && break; sleep $((i * 5)); done
+          fi
+
       - name: Кэш FFmpeg
         if: steps.guard.outputs.run == 'true'
         uses: actions/cache@v4
