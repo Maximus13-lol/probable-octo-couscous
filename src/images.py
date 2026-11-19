@@ -1,4 +1,8 @@
-"""Генерация картинок сцен через Pollinations.ai (бесплатно, без ключа)."""
+"""Генерация картинок сцен через Pollinations.ai.
+
+С ключом (секрет POLLINATIONS_TOKEN, ключ sk_… с enter.pollinations.ai) — новый API gen.pollinations.ai
+и модель получше (POLLINATIONS_KEY_MODEL, по умолчанию zimage — Z-Image Turbo), без очереди анонимного тарифа.
+Если ключа нет, баланс pollen кончился или новый API недоступен — старый бесплатный image.pollinations.ai."""
 from __future__ import annotations
 
 import io
@@ -14,14 +18,50 @@ from . import style
 from .utils import VIDEO_H, VIDEO_W, env, log, retry
 
 BASE = "https://image.pollinations.ai/prompt/"
+GEN = "https://gen.pollinations.ai/image/"
+_GEN_OFF = False  # новый API отказал (нет баланса / ключ неверный) — до конца запуска только старый
 
 
 class ImageError(RuntimeError):
     pass
 
 
-@retry(tries=5, base_delay=5, max_delay=90, exceptions=(requests.RequestException, ImageError), label="pollinations")
+def _as_image(r: requests.Response) -> Image.Image:
+    if not r.headers.get("content-type", "").startswith("image/") or len(r.content) < 10_000:
+        raise ImageError(f"ответ не похож на картинку ({r.headers.get('content-type')}, {len(r.content)} байт)")
+    img = Image.open(io.BytesIO(r.content))
+    img.load()
+    return img.convert("RGB")
+
+
+@retry(tries=3, base_delay=5, max_delay=60, exceptions=(requests.RequestException, ImageError), label="pollinations-gen")
+def _download_gen(prompt: str, seed: int, token: str) -> Image.Image:
+    global _GEN_OFF  # noqa: PLW0603
+    params = {"model": env("POLLINATIONS_KEY_MODEL", "zimage"), "width": VIDEO_W, "height": VIDEO_H,
+              "seed": seed, "nologo": "true", "enhance": "false", "safe": "true"}
+    r = requests.get(GEN + urllib.parse.quote(prompt, safe=""), params=params, timeout=180,
+                     headers={"Authorization": f"Bearer {token}", "User-Agent": "shorts-pipeline/1.0"})
+    if r.status_code in (401, 402, 403):
+        _GEN_OFF = True
+        log.warning("Pollinations (ключ): HTTP %s — %s. Дальше бесплатный тариф.", r.status_code, r.text[:200])
+        raise PermissionError("pollinations key rejected")
+    if r.status_code != 200:
+        raise ImageError(f"HTTP {r.status_code}: {r.text[:200]}")
+    return _as_image(r)
+
+
 def _download(prompt: str, seed: int) -> Image.Image:
+    token = env("POLLINATIONS_TOKEN")
+    if token and not _GEN_OFF:
+        try:
+            return _download_gen(prompt, seed, token)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Pollinations (ключ) не дал картинку (%s) — пробую бесплатный тариф", str(exc)[:120])
+    return _download_legacy(prompt, seed)
+
+
+@retry(tries=5, base_delay=5, max_delay=90, exceptions=(requests.RequestException, ImageError), label="pollinations")
+def _download_legacy(prompt: str, seed: int) -> Image.Image:
     params = {
         "width": VIDEO_W, "height": VIDEO_H, "seed": seed, "model": style.MODEL,
         "nologo": "true", "enhance": "false", "safe": "true", "referrer": "shorts-pipeline",
@@ -41,11 +81,7 @@ def _download(prompt: str, seed: int) -> Image.Image:
         time.sleep(min(wait, 120))
     if r.status_code != 200:
         raise ImageError(f"HTTP {r.status_code}: {r.text[:200]}")
-    if not r.headers.get("content-type", "").startswith("image/") or len(r.content) < 10_000:
-        raise ImageError(f"ответ не похож на картинку ({r.headers.get('content-type')}, {len(r.content)} байт)")
-    img = Image.open(io.BytesIO(r.content))
-    img.load()
-    return img.convert("RGB")
+    return _as_image(r)
 
 
 WATERMARK_CROP = float(env("POLLINATIONS_CROP", "0.06"))  # доля снизу, где бесплатный тариф ставит логотип
@@ -98,7 +134,8 @@ def generate_images(board: dict, run_dir: Path) -> list[Path]:
         except Exception as exc:  # noqa: BLE001
             log.error("Сцена %d: картинка не получена (%s)", i, exc)
             paths.append(None)
-        time.sleep(float(env("POLLINATIONS_DELAY", "3")))  # пауза между запросами (лимит анонимного тарифа)
+        if not env("POLLINATIONS_TOKEN") or _GEN_OFF:
+            time.sleep(float(env("POLLINATIONS_DELAY", "3")))  # пауза между запросами (лимит анонимного тарифа)
 
     ok = [p for p in paths if p]
     if len(ok) < max(1, len(paths) // 2):
