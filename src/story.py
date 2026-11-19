@@ -97,11 +97,15 @@ def _extras(choice: dict) -> tuple[str, dict]:
         meta["rubric"] = rub
         parts.append(f"Формат ролика — рубрика «{rub['label']}»: {rub['prompt']}")
     if quality.on("verdict"):
+        # Вывод «Я думаю…» и вопрос «А вы как думаете?» в озвучке снижали лайки (2,3 → 1,0 на 100 просмотров)
+        # и не давали комментариев — финал теперь держит фактом, а вопрос уходит в описание.
         meta["verdict"] = True
-        parts.append("Концовка обязательна в таком виде: предпоследнее предложение — честный вывод от лица автора "
-                     "канала («Я думаю…», «Мне кажется самой правдоподобной…»), с коротким объяснением почему; "
-                     "ПОСЛЕДНЕЕ предложение — вопрос зрителю («А вы как думаете…?», «Какая версия ближе вам?»), "
-                     "заканчивается знаком «?». Верни этот вопрос также в поле question.")
+        if not fmt or fmt.get("label") != "ПРАВДА ИЛИ МИФ":
+            parts.append("Концовка: НЕ пиши мнение автора («я думаю», «мне кажется») и НЕ задавай вопрос зрителю в "
+                         "тексте. Последние одно-два предложения — самая неожиданная проверенная деталь истории, "
+                         "которая переворачивает взгляд на неё и перекликается с хуком (например: «А дверь с тех пор "
+                         "так никто и не открыл.»). Финал короткий и резкий, без морали и без «вот такая история».")
+        parts.append("Отдельно (НЕ в тексте истории) придумай короткий вопрос зрителю для описания — поле question.")
     return ("\n\n" + "\n\n".join(parts)) if parts else "", meta
 
 
@@ -131,15 +135,14 @@ def write_story(choice: dict, run_dir: Path) -> dict:
   "hook": "<первое предложение истории>",
   "story": "<текст истории>",
   "description": "<1-2 предложения для описания видео>",
-  "hashtags": ["#тег1", "#тег2", "#тег3", "#тег4", "#тег5"]{', "question": "<вопрос зрителю из конца истории>"' if meta.get("verdict") else ''}{', "reference_used": true' if meta.get("article") else ''}}}"""
+  "hashtags": ["#тег1", "#тег2", "#тег3", "#тег4", "#тег5"]{', "question": "<вопрос зрителю для описания, НЕ из текста>"' if meta.get("verdict") else ''}{', "reference_used": true' if meta.get("article") else ''}}}"""
         acceptable: list[dict] = []
 
         def validate(obj):
             problem = _validate(obj)
-            if not problem and meta.get("verdict"):
-                last = re.split(r"(?<=[.!?…])\s+", obj["story"].strip())[-1]
-                if not last.endswith("?"):
-                    problem = "последнее предложение должно быть вопросом зрителю и заканчиваться знаком «?»"
+            if not problem and meta.get("verdict") and re.search(r"\b(я думаю|мне кажется|а вы как думаете)",
+                                                                   obj["story"].lower()):
+                problem = "в тексте не должно быть мнения автора и вопроса зрителю — финал фактом"
             if problem and _validate_relaxed(obj) is None:
                 acceptable.append(obj)  # запасной вариант на случай, если идеальный не получится
             return problem
@@ -169,9 +172,8 @@ def write_story(choice: dict, run_dir: Path) -> dict:
         data["article"] = {"title": a["title"], "lang": a["lang"], "url": a["url"]}
     if meta.get("rubric"):
         data["rubric"] = meta["rubric"]["label"]
-    if meta.get("verdict") and not data.get("question"):
-        last = re.split(r"(?<=[.!?…])\s+", data["story"])[-1]
-        data["question"] = last if last.endswith("?") else ""
+    if meta.get("verdict") and not str(data.get("question") or "").endswith("?"):
+        data["question"] = ""
     data["topic"] = choice["topic"]
     data["word_count"] = count_words(data["story"])
     save_json(run_dir / "story.json", data)
