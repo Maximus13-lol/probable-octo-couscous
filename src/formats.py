@@ -18,7 +18,7 @@ from .utils import CONFIG_DIR, env, load_json, log
 MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября",
           "ноября", "декабря"]
 UA = {"User-Agent": "ShortsPipeline/1.0 (educational shorts; https://github.com) python-requests"}
-DEFAULTS = {"slots": {"08:00": "morning"}, "morning_rotation": ["this_day", "myth20"]}
+DEFAULTS = {"slots": {"08:30-10:00": "morning"}, "morning_rotation": ["this_day", "myth20"]}
 
 # параметры форматов: длина текста, число сцен, плашка
 SPECS = {
