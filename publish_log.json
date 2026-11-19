@@ -527,5 +527,25 @@
     "publish_at": "2026-11-19T15:35:00Z",
     "slot_date": "2026-11-19",
     "question": "Откуда, по-вашему, на самом деле пришли зелёные дети Вулпита?"
+  },
+  {
+    "date": "2026-11-19",
+    "run_id": "20261119_185258",
+    "video_id": "Wl8kZ2C1nQI",
+    "url": "https://youtube.com/shorts/Wl8kZ2C1nQI",
+    "title": "Дело №2: Тайна перевала Дятлова #Shorts",
+    "topic": "Мистическое исчезновение людей в горах и загадочные истории",
+    "source": "google_trends",
+    "privacy": "public",
+    "ad_campaign": null,
+    "slot": null,
+    "cta_voice": null,
+    "thumbnail": "канал не подтверждён по телефону — свои обложки недоступны (youtube.com/verify)",
+    "rubric": "ТАЙНА",
+    "case": 2,
+    "question": "Какая версия гибели группы Дятлова кажется вам самой убедительной?",
+    "manual": true,
+    "publish_at": null,
+    "slot_date": "2026-11-19"
   }
 ]
