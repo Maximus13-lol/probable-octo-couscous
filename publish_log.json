@@ -547,5 +547,25 @@
     "manual": true,
     "publish_at": null,
     "slot_date": "2026-11-19"
+  },
+  {
+    "date": "2026-11-19",
+    "run_id": "20261119_203009",
+    "video_id": "hVNwEDd4k7E",
+    "url": "https://youtube.com/shorts/hVNwEDd4k7E",
+    "title": "Правда или миф: Викинги носили рога? #Shorts",
+    "topic": "Викинги носили рогатые шлемы",
+    "source": "myth",
+    "privacy": "public",
+    "ad_campaign": null,
+    "slot": "08:30-10:00",
+    "cta_voice": null,
+    "thumbnail": "канал не подтверждён по телефону — свои обложки недоступны (youtube.com/verify)",
+    "rubric": "ПРАВДА ИЛИ МИФ",
+    "case": null,
+    "question": "Как вы думаете, почему миф о рогатых шлемах стал таким популярным?",
+    "manual": false,
+    "publish_at": null,
+    "slot_date": "2026-11-19"
   }
 ]
