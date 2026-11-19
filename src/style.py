@@ -8,9 +8,9 @@ SEED = int(env("IMAGE_SEED", "424242"))
 MODEL = env("POLLINATIONS_MODEL", "flux")
 
 STYLE_PREFIX = (
-    "cinematic detailed illustration, moody lighting, dramatic volumetric light, "
-    "muted teal and amber color palette, soft film grain, painterly digital art, "
-    "high detail, vertical composition 9:16"
+    "dark cinematic concept art, matte painting, dramatic chiaroscuro lighting, volumetric fog and light rays, "
+    "deep shadows, muted teal and amber palette, rich textures, sharp focus on the main subject, "
+    "strong foreground-background depth, rule of thirds, award-winning composition, vertical 9:16"
 )
 STYLE_SUFFIX = "consistent art style, atmospheric, mysterious mood"
 # Flux не поддерживает negative prompt и от слов «text/letters» в промпте чаще рисует надписи,

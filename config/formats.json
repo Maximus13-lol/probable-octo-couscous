@@ -1,6 +1,6 @@
 {
   "slots": {
-    "08:00": "morning"
+    "08:30-10:00": "morning"
   },
   "morning_rotation": [
     "this_day",

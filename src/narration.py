@@ -70,6 +70,15 @@ def load_stress_dict() -> dict[str, str]:
     return {norm(k): v for k, v in raw.items() if not k.startswith("_") and isinstance(v, str)}
 
 
+# Слова, где «е» и «ё» — разные слова или обе формы допустимы: «ё» ставим, только если так написано в тексте.
+YO_AMBIGUOUS = {
+    "все", "всем", "небо", "осел", "лет", "мел", "сел", "совершенный", "совершенно", "совершенная", "совершенное",
+    "узнаем", "признаем", "поем", "передохнем", "падеж", "слезы", "береза", "вселенной", "отсек", "истекший",
+    "немой", "нем", "медь", "озера", "моем", "твое", "мое", "ее", "нее", "белесый", "блеклый", "гололед", "желоб",
+    "маневр", "афера", "опека", "бытие", "житие", "острие", "оседлый", "новорожденный", "осужденный",
+}
+
+
 def _apply_acc(word: str, acc: str) -> tuple[str, int | None]:
     """word — как в тексте; acc — форма с «+» перед ударной гласной (и, возможно, «ё»).
     Возвращает (слово с «ё», индекс ударной гласной или None)."""
@@ -77,8 +86,9 @@ def _apply_acc(word: str, acc: str) -> tuple[str, int | None]:
     if len(clean) != len(word):
         return word, None
     out = []
+    allow_yo = word.lower() not in YO_AMBIGUOUS
     for w, a in zip(word, clean):
-        if a in "ёЁ" and w in "еЕ":
+        if a in "ёЁ" and w in "еЕ" and allow_yo:
             out.append("ё" if w == "е" else "Ё")
         else:
             out.append(w)

@@ -207,6 +207,15 @@ def _with_alpha(im: Image.Image, a: float) -> Image.Image:
 
 def apply(frame: np.ndarray, t: float, cfg: dict | None = None) -> np.ndarray:
     cfg = cfg or config()
+    if cfg.get("mode") == "card":  # современная карточка канала (src/cta_card.py)
+        from . import cta_card
+        if "channel_name" not in cfg:
+            try:
+                from .quality import channel_name
+                cfg["channel_name"] = channel_name() or "Папка №13"
+            except Exception:  # noqa: BLE001
+                cfg["channel_name"] = "Папка №13"
+        return cta_card.apply(frame, t, cfg)
     base = Image.fromarray(frame).convert("RGBA")
     if cfg.get("mode") == "overlay":
         ov = render_overlay(t, {**cfg, "dim": 0.0}).crop(OVERLAY_CROP)

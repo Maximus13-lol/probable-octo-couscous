@@ -51,11 +51,29 @@ def _download(prompt: str, seed: int) -> Image.Image:
 WATERMARK_CROP = float(env("POLLINATIONS_CROP", "0.06"))  # доля снизу, где бесплатный тариф ставит логотип
 
 
+def grade(img: Image.Image) -> Image.Image:
+    """Единая «киношная» цветокоррекция канала: мягкий S-контраст, холодные тени и тёплые света
+    (teal & amber), чуть приглушённая насыщенность, виньетка. Делает разномастные кадры одним фильмом."""
+    import numpy as np
+    a = np.asarray(img.convert("RGB")).astype(np.float32) / 255.0
+    a = a + 0.10 * (a - 0.5) * (1 - np.abs(2 * a - 1))            # S-кривая: глубже тени, ярче света
+    lum = (0.299 * a[..., 0] + 0.587 * a[..., 1] + 0.114 * a[..., 2])[..., None]
+    a = lum + (a - lum) * 0.88                                     # чуть меньше насыщенности
+    shadow = np.clip(1 - lum * 2, 0, 1)                            # раздельное тонирование
+    high = np.clip(lum * 2 - 1, 0, 1)
+    a = a + shadow * np.array([-0.02, 0.015, 0.035]) + high * np.array([0.035, 0.015, -0.02])
+    h, w = a.shape[:2]
+    yy, xx = np.mgrid[0:h, 0:w]
+    r = np.sqrt(((xx - w / 2) / (w / 2)) ** 2 + ((yy - h / 2) / (h / 2)) ** 2)
+    a = a * (1 - 0.32 * np.clip(r - 0.45, 0, 1) ** 1.6)[..., None]  # виньетка
+    return Image.fromarray((np.clip(a, 0, 1) * 255).astype(np.uint8))
+
+
 def fit_vertical(img: Image.Image) -> Image.Image:
-    """Срезает полосу с логотипом внизу, затем обрезка по центру и масштабирование до 1080x1920."""
+    """Срезает полосу с логотипом внизу, обрезка по центру, масштаб до 1080x1920 и цветокоррекция канала."""
     if WATERMARK_CROP > 0:
         img = img.crop((0, 0, img.width, int(img.height * (1 - WATERMARK_CROP))))
-    return ImageOps.fit(img, (VIDEO_W, VIDEO_H), method=Image.LANCZOS, centering=(0.5, 0.5))
+    return grade(ImageOps.fit(img, (VIDEO_W, VIDEO_H), method=Image.LANCZOS, centering=(0.5, 0.5)))
 
 
 def generate_images(board: dict, run_dir: Path) -> list[Path]:

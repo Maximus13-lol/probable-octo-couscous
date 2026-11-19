@@ -54,6 +54,16 @@ def pick_music(run_dir: Path, duration: float) -> Path:
     return music_gen.generate(run_dir / "music_generated.wav", duration=duration + 2, seed=random.randint(1, 10_000))
 
 
+def _grain_frames(n: int = 6, strength: int = 9) -> list[np.ndarray]:
+    """Несколько кадров монохромного зерна (крупица 2x2), циклично по кадрам."""
+    rng = np.random.default_rng(13)
+    out = []
+    for _ in range(n):
+        small = rng.normal(0, strength, (VIDEO_H // 2, VIDEO_W // 2, 1)).astype(np.int16)
+        out.append(np.repeat(np.repeat(small, 2, axis=0), 2, axis=1))
+    return out
+
+
 def _text_layer(text: str, size: int, fill, bg=None, pad=(18, 10), opacity: float = 1.0):
     from PIL import Image, ImageDraw, ImageFont
     from .utils import find_font
@@ -104,7 +114,7 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
     speech_end = total - TAIL
     if cta_cfg.get("enabled"):
         voice_len = (cta_audio or {}).get("duration", 0.0)
-        if cta_cfg.get("mode") == "overlay":
+        if cta_cfg.get("mode") in ("overlay", "card"):
             # анимация поверх последних секунд истории, голос — сразу после последней фразы, хвост короткий
             cta_start = max(0.0, speech_end - float(cta_cfg.get("lead", 2.4)))
             cta_voice_at = speech_end + 0.1
@@ -134,6 +144,7 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
         subs.append((ev.start, ev.end, ys, rgba[:, :, :3].astype(np.float32), alpha))
 
     brand_layers = _brand_layers(brand) if brand else []
+    grain = _grain_frames() if env("FILM_GRAIN", "1") == "1" else []
 
     def frame(t: float) -> np.ndarray:
         active = [(b, e, f) for b, e, f in spans if b <= t < e] or [spans[-1]]
@@ -157,6 +168,9 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
                 region = out[y0:y0 + h, x0:x0 + w].astype(np.float32)
                 a = al * fade
                 out[y0:y0 + h, x0:x0 + w] = (region * (1 - a) + rgb * a).astype(np.uint8)
+        if grain:  # лёгкое плёночное зерно — «живая» картинка вместо стерильной
+            g = grain[int(t * FPS) % len(grain)]
+            out = np.clip(out.astype(np.int16) + g, 0, 255).astype(np.uint8)
         if cta_start is not None and t >= cta_start:
             out = cta.apply(out, t - cta_start, cta_cfg)
         return out

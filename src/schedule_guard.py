@@ -35,6 +35,18 @@ def slots_for(day: dt.date, c: dict) -> list[str]:
 
 
 def slot_dt(day: dt.date, hhmm: str, tz: ZoneInfo) -> dt.datetime:
+    """Время выхода слота. «19:00» — фиксированное; «18:00-19:30» — окно: каждый день своё случайное время
+    (шаг 5 мин), одинаковое для всех запусков этого дня (зерно = дата + окно), чтобы страж не путался."""
+    if "-" in hhmm:
+        import hashlib
+        a, b = hhmm.split("-")
+        ha, ma = map(int, a.split(":"))
+        hb, mb = map(int, b.split(":"))
+        start, end = ha * 60 + ma, hb * 60 + mb
+        steps = max(0, (end - start) // 5)
+        r = int(hashlib.sha256(f"{day.isoformat()}|{hhmm}".encode()).hexdigest(), 16) % (steps + 1)
+        minutes = start + r * 5
+        return dt.datetime(day.year, day.month, day.day, minutes // 60, minutes % 60, tzinfo=tz)
     h, m = map(int, hhmm.split(":"))
     return dt.datetime(day.year, day.month, day.day, h, m, tzinfo=tz)
 
