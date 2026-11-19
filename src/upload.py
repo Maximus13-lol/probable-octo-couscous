@@ -4,6 +4,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import random
+import re
 import time
 from pathlib import Path
 
@@ -57,6 +58,9 @@ def build_metadata(story: dict, ad_info: dict | None, music_credit: str | None =
     if story.get("case"):
         base = f"Дело №{story['case']}: {base}"
     elif story.get("title_prefix"):
+        if story["title_prefix"] == "Правда или миф":  # «Правда или миф: Правда ли, что …» — убираем повтор
+            base = re.sub(r"^(правда\s+ли,?\s*(что)?\s*)", "", base, flags=re.I)
+            base = base[:1].upper() + base[1:]
         base = f"{story['title_prefix']}: {base}"
     title = title_tpl.format(title=base)
     if len(title) > MAX_TITLE:
