@@ -4,6 +4,10 @@
     python -m src.get_refresh_token --client-id XXX --client-secret YYY
 
 Откроется браузер → войдите в аккаунт с каналом → разрешите доступ → в консоли появится refresh token.
+
+Без своего компьютера (например, в Google Cloud Shell) — флаг --manual: скрипт напечатает ссылку, вы
+разрешаете доступ в браузере, браузер уйдёт на «http://localhost…» (страница не откроется — это нормально),
+копируете ВЕСЬ адрес из адресной строки и вставляете его в консоль.
 """
 from __future__ import annotations
 
@@ -24,6 +28,7 @@ def main() -> None:
     p.add_argument("--client-id", required=True)
     p.add_argument("--client-secret", required=True)
     p.add_argument("--port", type=int, default=8080)
+    p.add_argument("--manual", action="store_true", help="без локального браузера: вставить адрес вручную")
     a = p.parse_args()
     flow = InstalledAppFlow.from_client_config(
         {"installed": {
@@ -34,7 +39,18 @@ def main() -> None:
         }},
         SCOPES,
     )
-    creds = flow.run_local_server(port=a.port, access_type="offline", prompt="consent")
+    if a.manual:
+        import os
+        os.environ["OAUTHLIB_INSECURE_TRANSPORT"] = "1"  # редирект на http://localhost — только для этой выдачи
+        flow.redirect_uri = f"http://localhost:{a.port}/"
+        url, _ = flow.authorization_url(access_type="offline", prompt="consent")
+        print("\n1) Откройте ссылку в браузере и разрешите ВСЕ доступы:\n\n" + url)
+        print("\n2) Браузер перейдёт на http://localhost... и покажет ошибку — это нормально.")
+        resp = input("3) Скопируйте ВЕСЬ адрес из адресной строки и вставьте сюда, затем Enter:\n> ").strip()
+        flow.fetch_token(authorization_response=resp)
+        creds = flow.credentials
+    else:
+        creds = flow.run_local_server(port=a.port, access_type="offline", prompt="consent")
     print("\n=== YT_REFRESH_TOKEN ===\n" + creds.refresh_token + "\n========================")
     print("Сохраните его в GitHub → Settings → Secrets and variables → Actions → YT_REFRESH_TOKEN")
 
