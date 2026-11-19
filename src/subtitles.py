@@ -12,13 +12,15 @@ from PIL import Image, ImageDraw, ImageFont
 from .utils import VIDEO_W, find_font, log
 
 FONT_SIZE = 86
-STROKE = 9
+STROKE = 5                 # тонкая обводка + мягкая тень вместо толстого «караоке-контура»
 MAX_TEXT_W = 820           # не заезжаем на правую панель кнопок Shorts
 CENTER_Y = 1240            # центр блока субтитров (нижняя подпись Shorts начинается ~1450)
 SUB_ZONE = (1060, 1420)    # вертикальная зона субтитров — её избегает рекламный модуль
 COLOR = (255, 255, 255)
 HIGHLIGHT = (255, 214, 0)
 STROKE_COLOR = (0, 0, 0)
+PILL = (229, 32, 39)       # фирменный красный: плашка под активным словом
+STYLE = "pill"             # "pill" — плашка под словом (современный стиль), "color" — жёлтое слово
 MIN_WORDS, MAX_WORDS, MAX_CHARS = 2, 4, 20
 BREAK_RE = re.compile(r"[.!?…,:;—–»)]$")
 SENT_END_RE = re.compile(r"[.!?…]»?$")
@@ -98,7 +100,8 @@ def _layout(words: list[str], font) -> list[list[int]]:
     lines, cur = [], []
     for i, w in enumerate(words):
         test = " ".join(words[k] for k in cur + [i])
-        if cur and font.getlength(test) > MAX_TEXT_W:
+        extra = font.size * 0.3 * len(cur)  # увеличенные пробелы под плашку
+        if cur and font.getlength(test) + extra > MAX_TEXT_W:
             lines.append(cur)
             cur = [i]
         else:
@@ -109,7 +112,8 @@ def _layout(words: list[str], font) -> list[list[int]]:
 
 
 def render_chunk(words: list[str], active: int | None) -> np.ndarray:
-    """RGBA-картинка фразы; active — индекс подсвеченного слова."""
+    """RGBA-картинка фразы; active — индекс подсвеченного слова (красная плашка со скруглением)."""
+    from PIL import ImageFilter
     words = [w.upper() for w in words]
     size = FONT_SIZE
     font = _font(size)
@@ -118,22 +122,38 @@ def render_chunk(words: list[str], active: int | None) -> np.ndarray:
         size -= 8
         font = _font(size)
         lines = _layout(words, font)
-    line_h = int(size * 1.12)
-    pad = STROKE + 6
+    line_h = int(size * 1.22)
+    pad = 34
     w_img = VIDEO_W
     h_img = line_h * len(lines) + pad * 2
-    img = Image.new("RGBA", (w_img, h_img), (0, 0, 0, 0))
-    d = ImageDraw.Draw(img)
-    space = font.getlength(" ")
+    text = Image.new("RGBA", (w_img, h_img), (0, 0, 0, 0))
+    pills = Image.new("RGBA", (w_img, h_img), (0, 0, 0, 0))
+    d, dp = ImageDraw.Draw(text), ImageDraw.Draw(pills)
+    space = font.getlength(" ") + size * 0.3   # место под плашку активного слова
     for li, idxs in enumerate(lines):
         total = sum(font.getlength(words[k]) for k in idxs) + space * (len(idxs) - 1)
         x = (w_img - total) / 2
         y = pad + li * line_h
         for k in idxs:
-            color = HIGHLIGHT if k == active else COLOR
-            d.text((x, y), words[k], font=font, fill=color, stroke_width=STROKE, stroke_fill=STROKE_COLOR)
-            x += font.getlength(words[k]) + space
-    return np.array(img)
+            wl = font.getlength(words[k])
+            hl = STYLE == "pill" and k == active
+            if hl:
+                bb = d.textbbox((x, y), words[k], font=font)
+                px, py = int(size * 0.2), int(size * 0.12)
+                dp.rounded_rectangle((bb[0] - px, bb[1] - py, bb[2] + px, bb[3] + py), radius=int(size * 0.24),
+                                     fill=PILL + (255,))
+            color = HIGHLIGHT if (STYLE != "pill" and k == active) else COLOR
+            d.text((x, y), words[k], font=font, fill=color,
+                   stroke_width=0 if hl else STROKE, stroke_fill=STROKE_COLOR)
+            x += wl + space
+    # мягкая тень под текстом и плашкой
+    a = np.maximum(np.asarray(text)[:, :, 3], np.asarray(pills)[:, :, 3])
+    shadow = Image.fromarray((a * 0.7).astype(np.uint8)).filter(ImageFilter.GaussianBlur(10))
+    sh = Image.new("RGBA", (w_img, h_img), (0, 0, 0, 0))
+    sh.paste(Image.new("RGBA", (w_img, h_img), (0, 0, 0, 255)), (0, 6), shadow)
+    sh.alpha_composite(pills)
+    sh.alpha_composite(text)
+    return np.array(sh)
 
 
 @dataclass
@@ -141,6 +161,7 @@ class SubEvent:
     image: np.ndarray
     start: float
     end: float
+    pop: bool = False      # первое появление фразы — анимация «поп»
 
 
 def build_events(chunks: list[list[Word]], total_dur: float) -> list[SubEvent]:
@@ -154,7 +175,7 @@ def build_events(chunks: list[list[Word]], total_dur: float) -> list[SubEvent]:
             end = chunk[wi + 1].start if wi + 1 < len(chunk) else chunk_end
             if end - start < 0.02:
                 continue
-            events.append(SubEvent(render_chunk(texts, wi), start, end))
+            events.append(SubEvent(render_chunk(texts, wi), start, end, pop=wi == 0))
     return events
 
 

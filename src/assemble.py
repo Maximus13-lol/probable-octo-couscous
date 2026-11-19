@@ -2,6 +2,7 @@
 субтитры; фоновая лоу-фай музыка ~12% с затуханием."""
 from __future__ import annotations
 
+import math
 import os
 import random
 from pathlib import Path
@@ -62,6 +63,25 @@ def _grain_frames(n: int = 6, strength: int = 9) -> list[np.ndarray]:
         small = rng.normal(0, strength, (VIDEO_H // 2, VIDEO_W // 2, 1)).astype(np.int16)
         out.append(np.repeat(np.repeat(small, 2, axis=0), 2, axis=1))
     return out
+
+
+POP = 0.16
+
+
+def _popped(rgba: np.ndarray, k: float, ys: int):
+    """Кадр анимации появления фразы: масштаб с лёгким перелётом и проявление."""
+    from PIL import Image as _I
+    c1 = 1.70158                                   # easeOutBack: 0.85 → чуть больше 1 → 1
+    k = min(1.0, k)
+    sc = 0.85 + 0.15 * (1 + (c1 + 1) * (k - 1) ** 3 + c1 * (k - 1) ** 2)
+    h, w = rgba.shape[:2]
+    nw, nh = max(2, int(w * sc)), max(2, int(h * sc))
+    im = _I.fromarray(rgba).resize((nw, nh), _I.BILINEAR)
+    canvas = _I.new("RGBA", (w, h + 40), (0, 0, 0, 0))
+    canvas.paste(im, ((w - nw) // 2, (h + 40 - nh) // 2))
+    arr = np.asarray(canvas)
+    a = arr[:, :, 3:4].astype(np.float32) / 255.0 * min(1.0, k * 2.5)
+    return arr[:, :, :3].astype(np.float32), a, ys - 20
 
 
 def _text_layer(text: str, size: int, fill, bg=None, pad=(18, 10), opacity: float = 1.0):
@@ -141,7 +161,7 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
         h = rgba.shape[0]
         ys = CENTER_Y - h // 2
         alpha = rgba[:, :, 3:4].astype(np.float32) / 255.0
-        subs.append((ev.start, ev.end, ys, rgba[:, :, :3].astype(np.float32), alpha))
+        subs.append((ev.start, ev.end, ys, rgba[:, :, :3].astype(np.float32), alpha, rgba if ev.pop else None))
 
     brand_layers = _brand_layers(brand) if brand else []
     grain = _grain_frames() if env("FILM_GRAIN", "1") == "1" else []
@@ -154,9 +174,11 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
             pb, pe, pf = active[-2]
             a = min(1.0, max(0.0, (t - b) / CROSSFADE))
             out = (pf(t - pb).astype(np.float32) * (1 - a) + out.astype(np.float32) * a).astype(np.uint8)
-        for s0, s1, ys, rgb, al in subs:
+        for s0, s1, ys, rgb, al, pop in subs:
             if s0 <= t < s1:
                 out = out.copy() if not out.flags.writeable else out
+                if pop is not None and t - s0 < POP:  # фраза «выпрыгивает»: масштаб 0.82→1.04→1
+                    rgb, al, ys = _popped(pop, (t - s0) / POP, ys)
                 region = out[ys:ys + rgb.shape[0]].astype(np.float32)
                 out[ys:ys + rgb.shape[0]] = (region * (1 - al) + rgb * al).astype(np.uint8)
                 break
