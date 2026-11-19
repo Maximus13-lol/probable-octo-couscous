@@ -30,6 +30,11 @@ def main() -> None:
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--manual", action="store_true", help="без локального браузера: вставить адрес вручную")
     a = p.parse_args()
+    if not a.client_id.endswith(".apps.googleusercontent.com"):
+        raise SystemExit("Client ID должен заканчиваться на .apps.googleusercontent.com — подставьте свой из "
+                         "Google Cloud → APIs & Services → Credentials (вместо ВАШ_ID).")
+    if len(a.client_secret) < 10 or not a.client_secret.isascii():
+        raise SystemExit("Client secret не похож на настоящий — подставьте свой (обычно начинается с GOCSPX-).")
     flow = InstalledAppFlow.from_client_config(
         {"installed": {
             "client_id": a.client_id, "client_secret": a.client_secret,
@@ -47,6 +52,9 @@ def main() -> None:
         print("\n1) Откройте ссылку в браузере и разрешите ВСЕ доступы:\n\n" + url)
         print("\n2) Браузер перейдёт на http://localhost... и покажет ошибку — это нормально.")
         resp = input("3) Скопируйте ВЕСЬ адрес из адресной строки и вставьте сюда, затем Enter:\n> ").strip()
+        if not resp.startswith("http://localhost"):
+            raise SystemExit("Нужен адрес, который начинается с http://localhost (после «Продолжить» в Google). "
+                             "Если Google показал ошибку — проверьте Client ID и секрет и запустите команду заново.")
         flow.fetch_token(authorization_response=resp)
         creds = flow.credentials
     else:
