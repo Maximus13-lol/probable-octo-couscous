@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import io
 import os
 import random
@@ -471,8 +472,12 @@ def pick_cta_recording(run_dir: Path, voice: list[dict] | None = None) -> dict |
         return None
 
 
-def synth_cta(text: str, run_dir: Path) -> dict | None:
-    """Озвучка концовки («лайк и подписка») тем же голосом Vosk. Без Vosk — концовка без голоса."""
+def synth_cta(text: str, run_dir: Path, voice: list[dict] | None = None) -> dict | None:
+    """Озвучка концовки («лайк и подписка») тем же голосом, что и ролик. Без Vosk — концовка без голоса."""
+    if voice and str(voice[0].get("voice", "")).startswith("qwen"):
+        q = qwen_cta(run_dir)
+        if q:
+            return q
     if not vosk_available():
         return None
     import numpy as np
@@ -530,12 +535,104 @@ def _synth_azure(narr: list[dict], adir: Path) -> list[dict]:
     raise RuntimeError(f"Azure: озвучка не удалась ни одним голосом: {last}")
 
 
+# ------------------------------------------------------------------ Qwen3-TTS: голос автора канала
+ROOT_DIR = Path(__file__).resolve().parent.parent
+
+
+def _qwen_cfg() -> dict:
+    c = {"model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base", "ref_audio": "assets/voice/ref.wav", "ref_text": "",
+         "language": "Russian", "min_recall": 0.85, "timeout_min": 45}
+    c.update(voice_config().get("qwen", {}) or {})
+    return c
+
+
+def qwen_available() -> bool:
+    """Нужны: отдельное окружение с qwen-tts (QWEN_PY) и расшифрованный образец голоса."""
+    py = env("QWEN_PY")
+    return bool(py and Path(py).exists() and (ROOT_DIR / _qwen_cfg()["ref_audio"]).exists())
+
+
+def _synth_qwen(narr: list[dict], adir: Path) -> list[dict]:
+    cfg = _qwen_cfg()
+    items = [{"id": f"s{sc['index']}", "text": sc["display_text"], "out": str(adir / f"q_{sc['index']:02d}.wav")}
+             for sc in narr]
+    from . import cta as cta_mod
+    cta_cfg = cta_mod.config()
+    if cta_cfg.get("enabled") and cta_cfg.get("voice_text"):
+        items.append({"id": "cta", "text": cta_cfg["voice_text"], "out": str(adir / "cta_qwen.wav")})
+    job = {"model": cfg["model"], "ref_audio": str(ROOT_DIR / cfg["ref_audio"]), "ref_text": cfg["ref_text"],
+           "language": cfg["language"], "min_recall": cfg["min_recall"],
+           "whisper_dir": str(ROOT_DIR / ".cache" / "whisper"), "items": items}
+    job_path = adir / "qwen_job.json"
+    save_json(job_path, job)
+    log.info("Озвучка голосом автора (Qwen3-TTS): %d фраз", len(items))
+    proc = subprocess.Popen([env("QWEN_PY"), str(ROOT_DIR / "tools" / "qwen_worker.py"), str(job_path)],
+                            stdout=subprocess.PIPE, text=True)
+    done: dict[str, dict] = {}
+    deadline = time.time() + float(cfg["timeout_min"]) * 60
+    for line in proc.stdout:  # type: ignore[union-attr]
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if ev.get("event") == "loaded":
+            log.info("Qwen3-TTS загружен за %s с", ev.get("sec"))
+        elif ev.get("id"):
+            done[ev["id"]] = ev
+            log.info("Фраза %s: распознано %.0f%% слов, режим %s, попыток %d%s", ev["id"], ev["recall"] * 100,
+                     ev["mode"], ev["attempts"], "" if ev.get("ok") else " ⚠ ниже порога")
+        if time.time() > deadline:
+            proc.kill()
+            raise RuntimeError("Qwen3-TTS не уложился во время")
+    if proc.wait() != 0 or any(f"s{sc['index']}" not in done for sc in narr):
+        raise RuntimeError(f"Qwen3-TTS завершился с ошибкой (код {proc.returncode})")
+    bad = [k for k, v in done.items() if k != "cta" and v["recall"] < 0.6]
+    if bad:
+        raise RuntimeError(f"Qwen3-TTS: фразы {bad} озвучены неразборчиво — откат на запасной голос")
+    result = []
+    for sc in narr:
+        raw = adir / f"q_{sc['index']:02d}.wav"
+        wav_path = adir / f"scene_{sc['index']:02d}.wav"
+        path = adir / f"scene_{sc['index']:02d}.mp3"
+        # тишина 50 мс по краям, громкость к единому уровню
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw), "-af",
+                        "adelay=50:all=1,apad=pad_dur=0.05,loudnorm=I=-16:TP=-1.5:LRA=11", "-ar", "24000", "-ac", "1",
+                        str(wav_path)], check=True)
+        subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav_path), "-c:a", "libmp3lame",
+                        "-b:a", "128k", str(path)], check=True)
+        dur = audio_duration(path)
+        words = align.WORD_RE.findall(sc["display_text"])
+        timed, matched = align.align_script(words, str(wav_path), dur)
+        result.append({"index": sc["index"], "path": str(path), "duration": dur, "words": timed,
+                       "voice": "qwen:author", "alignment": round(matched, 3),
+                       "pause_after": sc.get("pause_after_ms", 200) / 1000})
+        log.info("Озвучка сцены %d: %.2f с (голос автора, слов узнано %.0f%%)", sc["index"], dur, matched * 100)
+    return result
+
+
+def qwen_cta(run_dir: Path) -> dict | None:
+    """Концовка тем же голосом автора, если Qwen озвучил её вместе со сценами."""
+    raw = run_dir / "audio" / "cta_qwen.wav"
+    if not raw.exists():
+        return None
+    path = run_dir / "audio" / "cta.wav"
+    subprocess.run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(raw), "-af", "loudnorm=I=-16:TP=-1.5:LRA=11",
+                    "-ar", "24000", "-ac", "1", str(path)], check=True)
+    dur = audio_duration(path)
+    log.info("Озвучка концовки (голос автора): %.2f с", dur)
+    return {"path": str(path), "duration": dur}
+
+
 # ------------------------------------------------------------------ шаг конвейера
 def providers() -> list[str]:
     pref = voice_config().get("provider", "vosk")
     order = {"vosk": ["vosk", "gemini", "azure"], "gemini": ["gemini", "vosk", "azure"],
-             "azure": ["azure", "vosk", "gemini"]}.get(pref, ["vosk", "azure", "gemini"])
-    ok = {"azure": azure_available(), "gemini": gemini_available(), "vosk": vosk_available()}
+             "azure": ["azure", "vosk", "gemini"], "qwen": ["qwen", "vosk", "gemini", "azure"]
+             }.get(pref, ["vosk", "azure", "gemini"])
+    ok = {"azure": azure_available(), "gemini": gemini_available(), "vosk": vosk_available(),
+          "qwen": qwen_available()}
+    if pref == "qwen" and not ok["qwen"]:
+        log.warning("Голос автора недоступен (нет окружения Qwen или образца голоса) — запасной голос")
     return [p for p in order if ok[p]]
 
 
@@ -554,7 +651,7 @@ def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False) -> l
     for prov in provs:
         try:
             log.info("Озвучка: %s", prov)
-            fn = {"gemini": _synth_gemini, "azure": _synth_azure, "vosk": _synth_vosk}[prov]
+            fn = {"gemini": _synth_gemini, "azure": _synth_azure, "vosk": _synth_vosk, "qwen": _synth_qwen}[prov]
             result = fn(narr, adir)
             save_json(run_dir / "tts.json", result)
             return result

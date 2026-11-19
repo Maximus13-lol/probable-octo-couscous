@@ -7,3 +7,7 @@ output/*
 .env
 client_secret*.json
 .cache/
+
+# расшифрованный образец голоса автора — только на время сборки
+assets/voice/*.flac
+assets/voice/*.wav

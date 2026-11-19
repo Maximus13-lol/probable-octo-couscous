@@ -1,6 +1,6 @@
 {
-  "provider": "vosk",
-  "_provider_comment": "vosk — локальный Vosk TTS (бесплатно, без ключей); gemini — Gemini TTS; azure — Azure Speech. Остальные — запасные, если для них есть ключи.",
+  "provider": "qwen",
+  "_provider_comment": "qwen — голос автора канала (Qwen3-TTS, образец assets/voice/ref.flac.gpg, ключ VOICE_KEY); vosk — локальный Vosk TTS; gemini — Gemini TTS; azure — Azure Speech. Если голос автора недоступен — запасные по порядку.",
   "vosk": {
     "model": "vosk-model-tts-ru-0.9-multi",
     "speaker": 3,
@@ -65,5 +65,14 @@
     "rate_max": 8,
     "pitch_min": -8,
     "pitch_max": 10
+  },
+  "qwen": {
+    "model": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    "ref_audio": "assets/voice/ref.flac",
+    "ref_text": "Всё обстояло далеко не так просто. Ты хочешь сказать, что в книге есть неточности? Нет. На первый взгляд, там всё правда. А копнуть поглубже — полнейший вздор.",
+    "language": "Russian",
+    "min_recall": 0.85,
+    "timeout_min": 45,
+    "_comment": "Вариант B (образец с интонацией), выбран автором 19.11.2026. Каждая фраза проверяется распознаванием; при потере слов — повтор, затем режим «только тембр», затем голос Vosk."
   }
 }

@@ -49,7 +49,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 110
+    timeout-minutes: 120
     env:
       PYTHONUNBUFFERED: "1"
       PUBLISH: ${{ github.event_name == 'schedule' || (inputs.no_upload == false && inputs.test_ad == false) }}
@@ -83,10 +83,7 @@ jobs:
         run: |
           python -m src.comments
           if ! git diff --quiet publish_log.json; then
-            git config user.name "shorts-bot"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add publish_log.json && git commit -qm "chore: комментарии под роликами [skip ci]"
-            for i in 1 2 3; do git pull --rebase -q && git push -q && break; sleep $((i * 5)); done
+            bash tools/save_state.sh "chore: комментарии под роликами [skip ci]"
           fi
 
       - name: Кэш FFmpeg
@@ -135,6 +132,39 @@ jobs:
             .cache/whisper
             ~/.cache/vosk
           key: models-ruaccent-1.5.8.3-whisper-small-vosk-0.9-v2
+
+      - name: Голос автора — образец (расшифровка)
+        id: voice
+        if: steps.guard.outputs.run == 'true'
+        env:
+          VOICE_KEY: ${{ secrets.VOICE_KEY }}
+        run: |
+          if [ -z "$VOICE_KEY" ] || [ ! -f assets/voice/ref.flac.gpg ]; then
+            echo "::warning::Нет VOICE_KEY — озвучка запасным голосом"; echo "ok=false" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          gpg --batch --quiet --pinentry-mode loopback --passphrase "$VOICE_KEY" -o assets/voice/ref.flac -d assets/voice/ref.flac.gpg \
+            && echo "ok=true" >> "$GITHUB_OUTPUT" || { echo "::warning::Образец голоса не расшифрован"; echo "ok=false" >> "$GITHUB_OUTPUT"; }
+
+      - name: Голос автора — кэш окружения Qwen3-TTS и модели
+        if: steps.voice.outputs.ok == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/qwen-venv
+            ~/.cache/huggingface
+          key: qwen-tts-0.1.1-0.6b-v1
+
+      - name: Голос автора — окружение Qwen3-TTS
+        if: steps.voice.outputs.ok == 'true'
+        timeout-minutes: 15
+        run: |
+          if [ ! -x ~/qwen-venv/bin/python ]; then
+            python -m venv ~/qwen-venv
+            ~/qwen-venv/bin/pip install -q --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+            ~/qwen-venv/bin/pip install -q qwen-tts==0.1.1 faster-whisper
+          fi
+          ~/qwen-venv/bin/python -c "import qwen_tts, faster_whisper; print('qwen-tts ok')" \
+            && echo "QWEN_PY=$HOME/qwen-venv/bin/python" >> "$GITHUB_ENV" || echo "::warning::Qwen3-TTS недоступен"
 
       - name: Конвейер
         if: steps.guard.outputs.run == 'true'
@@ -201,13 +231,4 @@ jobs:
       - name: Сохранить состояние (темы, логи публикаций и показов рекламы)
         if: success() && env.PUBLISH == 'true' && steps.guard.outputs.run == 'true'
         run: |
-          git config user.name "shorts-bot"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add used_topics.json publish_log.json ads/log.json trends_quota.json 2>/dev/null || true
-          git add -A inbox 2>/dev/null || true   # режим «живой голос»: новые сценарии / удалённые после публикации
-          if git diff --cached --quiet; then echo "Нет изменений"; exit 0; fi
-          git commit -m "chore: состояние после публикации $(date -u +%F) [skip ci]"
-          for i in 1 2 3; do
-            git pull --rebase -q && git push && break
-            sleep $((i * 5))
-          done
+          bash tools/save_state.sh "chore: состояние после публикации $(date -u +%F) [skip ci]"

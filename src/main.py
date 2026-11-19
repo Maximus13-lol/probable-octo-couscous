@@ -153,7 +153,7 @@ def run(args) -> int:
         cta_cfg = cta.config()
         cta_audio = None
         if cta_cfg.get("enabled"):  # сначала ваша живая запись (assets/cta/voice), иначе голос Vosk
-            cta_audio = tts.pick_cta_recording(run_dir, voice) or tts.synth_cta(cta_cfg["voice_text"], run_dir)
+            cta_audio = tts.pick_cta_recording(run_dir, voice) or tts.synth_cta(cta_cfg["voice_text"], run_dir, voice)
         done("tts", t)
 
         t = step(7, "субтитры + сборка (MoviePy)")
