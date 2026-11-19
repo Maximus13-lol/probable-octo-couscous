@@ -11,7 +11,12 @@ import argparse
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"]
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/youtube",                 # удаление роликов, закреплённый комментарий
+    "https://www.googleapis.com/auth/yt-analytics.readonly",   # удержание и досмотры в статистике
+]
 
 
 def main() -> None:
