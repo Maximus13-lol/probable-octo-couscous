@@ -554,8 +554,9 @@ def qwen_available() -> bool:
 
 def _synth_qwen(narr: list[dict], adir: Path) -> list[dict]:
     cfg = _qwen_cfg()
-    items = [{"id": f"s{sc['index']}", "text": sc["display_text"], "out": str(adir / f"q_{sc['index']:02d}.wav")}
-             for sc in narr]
+    caps = cfg.get("stress_caps", True)
+    items = [{"id": f"s{sc['index']}", "text": (sc.get("qwen_text") if caps else None) or sc["display_text"],
+              "out": str(adir / f"q_{sc['index']:02d}.wav")} for sc in narr]
     from . import cta as cta_mod
     cta_cfg = cta_mod.config()
     if cta_cfg.get("enabled") and cta_cfg.get("voice_text"):
