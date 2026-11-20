@@ -203,16 +203,30 @@ def assemble(board: dict, images: list[Path], tts: list[dict], run_dir: Path, ou
     voice = [AudioFileClip(a["path"]).with_start(t0) for a, t0 in zip(tts, starts)]
     if cta_start is not None and cta_audio and cta_audio.get("path"):
         voice.append(AudioFileClip(cta_audio["path"]).with_start(cta_voice_at))
-    music_path = pick_music(run_dir, total)
+    from . import sfx as sfx_mod
+    has_tracks = any(p.is_file() for p in MUSIC_DIR.glob("*") if p.suffix.lower() in (".mp3", ".wav", ".ogg", ".m4a", ".flac"))
+    try:
+        plan = sfx_mod.build(run_dir, starts, total, starts[-1] if len(starts) > 1 else None)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Звуковой дизайн недоступен: %s", exc)
+        plan = {"events": [], "ambient": None}
+    effects = [AudioFileClip(p).with_start(t).with_effects([afx.MultiplyVolume(v)])
+               for p, t, v in plan["events"] if t < total - 0.3]
+    if plan.get("ambient") and not has_tracks:  # тёмный эмбиент вместо процедурного лоу-фая
+        log.info("Музыка: процедурный тёмный эмбиент (без авторских прав)")
+        music_path = Path(plan["ambient"])
+    else:
+        music_path = pick_music(run_dir, total)
     music = AudioFileClip(str(music_path))
     if music.duration < total:
         music = music.with_effects([afx.AudioLoop(duration=total)])
     else:
         offset = random.uniform(0, max(0.0, min(30.0, music.duration - total - 1)))
         music = music.subclipped(offset, offset + total)
-    music = music.with_effects([afx.MultiplyVolume(MUSIC_VOLUME), afx.AudioFadeIn(1.0),
+    vol = plan.get("ambient_volume", MUSIC_VOLUME) if str(music_path) == str(plan.get("ambient")) else MUSIC_VOLUME
+    music = music.with_effects([afx.MultiplyVolume(vol), afx.AudioFadeIn(1.0),
                                 afx.AudioFadeOut(MUSIC_FADE_OUT)])
-    audio = CompositeAudioClip([music] + voice).with_duration(total)
+    audio = CompositeAudioClip([music] + effects + voice).with_duration(total)
     video = video.with_audio(audio)
 
     out = run_dir / out_name
