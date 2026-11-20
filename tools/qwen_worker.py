@@ -60,6 +60,34 @@ def recall(expected: str, heard: str) -> tuple[float, bool]:
     return hit / len(exp), head_ok
 
 
+def fluency_penalty(expected: str, words) -> tuple[float, list[str]]:
+    """Запинки по таймингам слов (faster-whisper): пауза посреди фразы без знака препинания, повтор слова,
+    лишние слова, растянутое слово. Возвращает штраф и список найденных проблем."""
+    issues = []
+    ws = [w for w in words if w.word.strip()]
+    exp = norm_words(expected)
+    got = [norm_words(w.word) for w in ws]
+    for i in range(len(ws) - 1):
+        gap = ws[i + 1].start - ws[i].end
+        if gap > 0.45 and not re.search(r"[.,!?…:;—–-]\s*$", ws[i].word.strip()):
+            issues.append(f"пауза {gap:.1f}с после «{ws[i].word.strip()}»")
+        if got[i] and got[i] == got[i + 1] and got[i] != [] and exp.count(got[i][0]) < 2:
+            issues.append(f"повтор «{ws[i].word.strip()}»")
+    flat = [g for gg in got for g in gg]
+    if any(ch.isdigit() for ch in "".join(w.word for w in ws)):  # числа распознаются цифрами
+        flat = [g for g in flat if not g.isdigit()]
+        exp = [e for e in exp if not _is_num(e)]
+    extra_pen = 0.0
+    if len(flat) > len(exp) + 1:
+        issues.append(f"лишние слова ({len(flat) - len(exp)})")
+        extra_pen = min(0.6, 0.05 * (len(flat) - len(exp)))
+    for w in ws[1:]:  # у первого слова распознавание часто «захватывает» тишину в начале
+        letters = len(re.sub(r"[^а-яёa-z]", "", w.word.lower()))
+        if letters and (w.end - w.start) > 0.13 * letters + 0.45:
+            issues.append(f"растянуто «{w.word.strip()}»")
+    return 0.15 * len(issues) + extra_pen, issues
+
+
 def main() -> None:
     job = json.load(open(sys.argv[1], encoding="utf-8"))
     from faster_whisper import WhisperModel
@@ -87,7 +115,7 @@ def main() -> None:
         text = it["text"]
         best = None
         attempts = 0
-        for mode, seed in (("icl", 1), ("icl", 7), ("xvec", 1), ("xvec", 7)):
+        for mode, seed in (("icl", 1), ("icl", 7), ("icl", 23), ("xvec", 1), ("xvec", 7)):
             attempts += 1
             torch.manual_seed(seed)
             wavs, sr = model.generate_voice_clone(text=text, language=job.get("language", "Russian"),
@@ -96,19 +124,22 @@ def main() -> None:
             w = np.asarray(wavs[0], dtype=np.float32)
             dur = len(w) / sr
             w16 = librosa.resample(w, orig_sr=sr, target_sr=16000)
-            segs, _ = asr.transcribe(w16, language="ru", beam_size=1)
+            segs, _ = asr.transcribe(w16, language="ru", beam_size=1, word_timestamps=True)
+            segs = list(segs)
             heard = " ".join(s.text for s in segs)
             rec, head_ok = recall(text, heard)
+            pen, issues = fluency_penalty(text, [x for s in segs for x in (s.words or [])])
             cps = len(text) / max(dur, 0.1)  # символов в секунду: обрезка/затягивание
-            score = rec - (0 if head_ok else 0.3) - (0 if 7 <= cps <= 24 else 0.3)
+            score = rec - (0 if head_ok else 0.3) - (0 if 7 <= cps <= 24 else 0.3) - pen
             if best is None or score > best[0]:
-                best = (score, w, sr, mode, rec, heard)
-            if rec >= min_recall and head_ok and 7 <= cps <= 24:
+                best = (score, w, sr, mode, rec, heard, issues)
+            if rec >= min_recall and head_ok and 7 <= cps <= 24 and not issues:
                 break
-        score, w, sr, mode, rec, heard = best
+        score, w, sr, mode, rec, heard, issues = best
         sf.write(it["out"], w, sr)
         print(json.dumps({"id": it["id"], "out": it["out"], "recall": round(rec, 3), "mode": mode,
-                          "attempts": attempts, "ok": score >= min_recall, "heard": heard[:200]},
+                          "attempts": attempts, "ok": score >= min_recall and not issues, "issues": issues,
+                          "heard": heard[:200]},
                          ensure_ascii=False), flush=True)
 
 
