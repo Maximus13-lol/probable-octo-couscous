@@ -79,6 +79,41 @@ YO_AMBIGUOUS = {
 }
 
 
+# Слова, где чаще всего ошибаются в ударении (дикторы и синтезаторы речи), — по орфоэпическому минимуму
+ORTHOEPY_STEMS = (
+    "звон", "договор", "каталог", "квартал", "торт", "кухонн", "красиве", "щавел", "жалюз", "туфл", "облегч",
+    "углуб", "углубл", "балованн", "включ", "добыч", "досуг", "свекл", "столяр", "цемент", "эксперт", "километр",
+    "партер", "диспансер", "ходатай", "оптов", "черпать", "иконопис", "искра", "кремен", "мастерск", "некролог",
+    "намерени", "обеспечени", "ремен", "сирот", "созыв", "средства", "статуя", "феномен", "щелкать", "хвоя",
+    "нефтепровод", "газопровод", "мусоропровод", "кладовая", "километр", "ненадолго", "издавна", "донельзя",
+    "призыв", "отрочеств", "дремота", "завидно", "загодя", "зубчат", "клала", "крала", "лгала", "ждала", "брала",
+    "взяла", "взята", "начал", "понял", "принял", "создал", "отнял", "прибыл", "заперт", "запертый", "ворота",
+    "дефис", "диалог", "жилось", "задолго", "иксы", "исстари", "камбала", "ломоть", "мизерн", "новорожден",
+    "обострен", "оптом", "ракурс", "свёкл", "сверлит", "тотчас", "убыстрит", "умерш", "уведомит", "христианин",
+    "шарфы", "банты", "бармен", "бойкий", "газопровод", "гражданство", "дешевизна", "добела", "довезенный",
+    "закупорить", "избалованный", "исчерпать", "кашлянуть", "мельком", "надолго", "низведен", "плесневеть",
+    "пломбировать", "прозорлив", "рвала", "сливовый", "столяр", "углубить", "хаос", "ходатайство", "цыган",
+)
+NUM_STEMS = ("одн", "один", "два", "две", "двух", "двум", "три", "трех", "трём", "четыр", "пят", "шест", "сем",
+             "восем", "восьм", "девят", "десят", "одиннад", "двенад", "тринад", "четырнад", "пятнад", "шестнад",
+             "семнад", "восемнад", "девятнад", "двадцат", "тридцат", "сорок", "девяност", "сто", "двест", "двухсот",
+             "трист", "трехсот", "четырест", "четырехсот", "пятьсот", "пятисот", "шестьсот", "шестисот", "семьсот",
+             "семисот", "восемьсот", "восьмисот", "девятьсот", "девятисот", "тысяч", "миллион", "миллиард", "перв",
+             "втор", "трет", "четверт", "сотн", "полтор")
+
+
+def _risky(word: str, text: str, start: int) -> bool:
+    """Слово, на котором модель с голосом автора чаще ошибается в ударении: числительные, имена и названия
+    (с заглавной буквы не в начале предложения), слова из орфоэпического минимума."""
+    lw = word.lower()
+    if lw.startswith(NUM_STEMS) or lw.startswith(ORTHOEPY_STEMS):
+        return True
+    if word[:1].isupper():
+        before = text[:start].rstrip()
+        return bool(before) and before[-1] not in ".!?…«\"—–-"
+    return False
+
+
 _YO_HOMOGRAPHS: set[str] | None = None
 
 
@@ -219,7 +254,8 @@ class Stresser:
             vowels = sum(ch in VOWELS for ch in display)
             need = (
                 idx is not None and vowels > 1 and self.method == "acute" and "ё" not in display.lower()
-                and (source == "dict" or self.mode == "all" or self.is_homograph(w))
+                and (source == "dict" or self.mode == "all" or self.is_homograph(w)
+                     or (self.mode == "risky" and _risky(w, text, s)))
             )
             speak = display
             if need and display[idx] in VOWELS:
@@ -240,10 +276,23 @@ def render(text: str, words: list[WordInfo], start: int, end: int, kind: str) ->
         if w.end <= start or w.start >= end:
             continue
         out.append(text[pos:w.start])
-        out.append(w.display if kind == "display" else w.speak)
+        if kind == "display":
+            out.append(w.display)
+        elif kind == "caps":  # для Qwen3-TTS: ударная гласная заглавной буквой (знак ударения модель не читает)
+            out.append(_caps(w.speak) if w.stressed else w.display)
+        else:
+            out.append(w.speak)
         pos = w.end
     out.append(text[pos:end])
     return "".join(out)
+
+
+def _caps(speak: str) -> str:
+    """«за́мок» → «зАмок»."""
+    i = speak.find(ACUTE)
+    if i <= 0:
+        return speak
+    return speak[: i - 1] + speak[i - 1].upper() + speak[i + 1:]
 
 
 def _idx_from_acc(acc: str) -> int | None:
@@ -796,6 +845,7 @@ def direct(board: dict, run_dir: Path, voice: str | None = None, voice_styles: l
             "pause_after_ms": max(_clamp(plan.get("pause_after_ms", 0), 0, 600), vosk_pauses(cfg)["scene"])
                               if sc is not scenes[-1] else 0,
             "stressed_words": stressed,
+            "qwen_text": render(text, words, 0, len(text), "caps"),
             "yo_words": [w.display for w in words if w.source == "yo"],
         })
     # для удобства — одна склеенная разметка всего ролика
