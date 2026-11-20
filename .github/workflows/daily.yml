@@ -149,10 +149,8 @@ jobs:
         if: steps.voice.outputs.ok == 'true'
         uses: actions/cache@v4
         with:
-          path: |
-            ~/qwen-venv
-            ~/.cache/huggingface
-          key: qwen-tts-0.1.1-0.6b-v1
+          path: ~/qwen-venv
+          key: qwen-venv-0.1.1-v2
 
       - name: Голос автора — окружение Qwen3-TTS
         if: steps.voice.outputs.ok == 'true'
