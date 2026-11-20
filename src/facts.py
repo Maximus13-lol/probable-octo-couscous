@@ -1,6 +1,8 @@
 """Справка по теме из Википедии: история опирается на проверяемые факты, а статья идёт в «Источники»."""
 from __future__ import annotations
 
+import re
+
 import requests
 
 from .utils import log
@@ -35,6 +37,19 @@ def _titles(choice: dict) -> list[tuple[str, str]]:
         return []
 
 
+OFF_TOPIC = re.compile(r"\((теле)?(сериал|фильм|мультфильм|роман|повесть|книга|игра|видеоигра|альбом|песня|группа|"
+                       r"спектакль|опера|TV series|film|movie|novel|book|video game|game|album|song|band|miniseries|"
+                       r"documentary|play|opera)[^)]*\)", re.I)
+MEDIA_WORDS = re.compile(r"(фильм|сериал|кино|книг|роман|игр|film|movie|series|novel|game)", re.I)
+
+
+def _off_topic(title: str, choice: dict) -> bool:
+    """Статья о фильме/сериале/книге с тем же названием, а тема — о самом событии (пример: «Перевал Дятлова
+    (телесериал)» вместо «Гибель тургруппы Дятлова»)."""
+    topic = f"{choice.get('topic', '')} {choice.get('topic_en', '')}"
+    return bool(OFF_TOPIC.search(title)) and not MEDIA_WORDS.search(topic)
+
+
 def lookup(choice: dict) -> dict | None:
     """Статья ru-Википедии по теме, иначе en-Википедии. None — если ничего подходящего."""
     first = [(choice.get("wiki_lang", "en"), choice["wiki_title"])] if choice.get("wiki_title") else []
@@ -45,6 +60,9 @@ def lookup(choice: dict) -> dict | None:
             art = _search(lang, q)
         except Exception as exc:  # noqa: BLE001
             log.warning("Википедия (%s) недоступна: %s", lang, exc)
+            continue
+        if art and _off_topic(art["title"], choice):
+            log.info("Справка «%s» — о фильме/книге, а не о событии: пропускаю", art["title"])
             continue
         if art and len(art["extract"]) > 300:
             log.info("Справка: %s (%s-Википедия, %d символов)", art["title"], lang, len(art["extract"]))

@@ -122,6 +122,44 @@ def _extras(choice: dict) -> tuple[str, dict]:
     return ("\n\n" + "\n\n".join(parts)) if parts else "", meta
 
 
+def fact_check(data: dict, article: dict) -> dict:
+    """Сверка истории со справкой: неподтверждённые конкретные детали (даты, числа, имена, «факты»)
+    убираются или обобщаются. Хук и финал сохраняются; если исправленный текст не проходит проверки — исходный."""
+    try:
+        obj = gemini.generate_json(f"""Ты фактчекер. СПРАВКА (статья «{article['title']}»):
+\"\"\"{article['extract'][:3500]}\"\"\"
+
+ТЕКСТ РОЛИКА:
+\"\"\"{data['story']}\"\"\"
+
+Найди в тексте конкретные утверждения (даты, числа, имена, места, события), которые ПРОТИВОРЕЧАТ справке или
+выдуманы (их нет в справке и они не общеизвестны). Общеизвестные факты и художественные связки — не ошибки.
+Если ошибки есть — верни исправленный текст: ошибочные детали замени верными из справки или обобщи
+(«в начале двадцатого века» вместо выдуманной даты). Сохрани первое предложение (хук), финальную фразу, стиль,
+длину (±10% слов) и правило: все числа словами. Если ошибок нет — fixed пустой.
+Верни JSON: {{"errors": [{{"claim": "...", "why": "..."}}], "fixed": "<исправленный текст или пустая строка>"}}""",
+                                   temperature=0.1)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Фактчек недоступен: %s", exc)
+        return data
+    errors = obj.get("errors") if isinstance(obj, dict) else None
+    data["fact_check"] = errors or []
+    fixed = " ".join(str(obj.get("fixed") or "").split()) if isinstance(obj, dict) else ""
+    if errors and fixed:
+        candidate = dict(data, story=fixed)
+        problem = _validate(candidate)
+        if problem and _validate_relaxed(candidate):
+            log.warning("Фактчек: исправленный текст не прошёл проверку (%s) — оставляю исходный", problem)
+        else:
+            log.info("Фактчек: исправлено %d утверждений: %s", len(errors),
+                     "; ".join(str(e.get("claim", ""))[:60] for e in errors[:3] if isinstance(e, dict)))
+            data = candidate
+            data["hook"] = re.split(r"(?<=[.!?…])\s+", fixed)[0]
+    elif not errors:
+        log.info("Фактчек: расхождений со справкой не найдено")
+    return data
+
+
 def write_story(choice: dict, run_dir: Path) -> dict:
     extra, meta = _extras(choice) if gemini.available() else ("", {})
     if gemini.available():
@@ -175,6 +213,8 @@ def write_story(choice: dict, run_dir: Path) -> dict:
         data = dict(DEMO_STORY)
 
     data["story"] = " ".join(data["story"].split())
+    if meta.get("article") and data.get("reference_used") is not False and gemini.available():
+        data = fact_check(data, meta["article"])
     if meta.get("sources"):
         src = list(meta["sources"])
         if meta.get("article") and data.get("reference_used") is False:
