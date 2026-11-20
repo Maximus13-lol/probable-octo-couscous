@@ -79,6 +79,26 @@ YO_AMBIGUOUS = {
 }
 
 
+_YO_HOMOGRAPHS: set[str] | None = None
+
+
+def yo_homographs() -> set[str]:
+    """Слова, которые пишутся и через «е», и через «ё» с разным смыслом (все/всё, небо/нёбо, слезы/слёзы):
+    словарь RUAccent (~640 слов) + наш список. В них «ё» не добавляем — только если её написал сценарист."""
+    global _YO_HOMOGRAPHS  # noqa: PLW0603
+    if _YO_HOMOGRAPHS is None:
+        import gzip
+        import json as _json
+        found = set(YO_AMBIGUOUS)
+        path = Path(env("RUACCENT_DIR", str(ROOT / ".cache" / "ruaccent"))) / "dictionary" / "yo_homographs.json.gz"
+        try:
+            found |= set(_json.load(gzip.open(path, "rt", encoding="utf-8")).keys())
+        except (OSError, ValueError):
+            pass
+        _YO_HOMOGRAPHS = found
+    return _YO_HOMOGRAPHS
+
+
 def _apply_acc(word: str, acc: str) -> tuple[str, int | None]:
     """word — как в тексте; acc — форма с «+» перед ударной гласной (и, возможно, «ё»).
     Возвращает (слово с «ё», индекс ударной гласной или None)."""
@@ -86,7 +106,7 @@ def _apply_acc(word: str, acc: str) -> tuple[str, int | None]:
     if len(clean) != len(word):
         return word, None
     out = []
-    allow_yo = word.lower() not in YO_AMBIGUOUS
+    allow_yo = word.lower() not in yo_homographs()
     for w, a in zip(word, clean):
         if a in "ёЁ" and w in "еЕ" and allow_yo:
             out.append("ё" if w == "е" else "Ё")
