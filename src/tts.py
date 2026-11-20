@@ -580,8 +580,9 @@ def _synth_qwen(narr: list[dict], adir: Path) -> list[dict]:
             log.info("Qwen3-TTS загружен за %s с", ev.get("sec"))
         elif ev.get("id"):
             done[ev["id"]] = ev
-            log.info("Фраза %s: распознано %.0f%% слов, режим %s, попыток %d%s", ev["id"], ev["recall"] * 100,
-                     ev["mode"], ev["attempts"], "" if ev.get("ok") else " ⚠ ниже порога")
+            log.info("Фраза %s: распознано %.0f%% слов, режим %s, попыток %d%s%s", ev["id"], ev["recall"] * 100,
+                     ev["mode"], ev["attempts"], "" if ev.get("ok") else " ⚠ ниже порога",
+                     (" — запинки: " + "; ".join(ev["issues"])) if ev.get("issues") else "")
         if time.time() > deadline:
             proc.kill()
             raise RuntimeError("Qwen3-TTS не уложился во время")
