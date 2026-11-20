@@ -1,0 +1,64 @@
+name: Voice lab
+
+# Сравнение вариантов озвучки голосом автора. Результат шифруется ключом VOICE_KEY и кладётся в ветку
+# voice-lab (в открытом виде голос в публичный репозиторий не попадает).
+on:
+  workflow_dispatch:
+    inputs:
+      plain:
+        description: "Текст без пометок"
+        type: string
+        required: true
+      caps:
+        description: "Тот же текст с ударной гласной заглавной"
+        type: string
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: main
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Образец голоса
+        env:
+          VOICE_KEY: ${{ secrets.VOICE_KEY }}
+        run: gpg --batch --quiet --pinentry-mode loopback --passphrase "$VOICE_KEY" -o assets/voice/ref.flac -d assets/voice/ref.flac.gpg
+      - uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/qwen-venv
+            ~/.cache/huggingface
+          key: qwen-tts-0.1.1-0.6b-v1
+      - name: Окружение
+        run: |
+          if [ ! -x ~/qwen-venv/bin/python ]; then
+            python -m venv ~/qwen-venv
+            ~/qwen-venv/bin/pip install -q --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+            ~/qwen-venv/bin/pip install -q qwen-tts==0.1.1 faster-whisper
+          fi
+      - name: Озвучка вариантов
+        env:
+          LAB_PLAIN: ${{ inputs.plain }}
+          LAB_CAPS: ${{ inputs.caps }}
+        run: ~/qwen-venv/bin/python tools/voice_lab.py
+      - name: Зашифровать и сохранить в ветку voice-lab
+        env:
+          VOICE_KEY: ${{ secrets.VOICE_KEY }}
+        run: |
+          tar czf lab.tgz lab
+          gpg --batch --quiet --pinentry-mode loopback --passphrase "$VOICE_KEY" -c --cipher-algo AES256 -o /tmp/lab.tgz.gpg lab.tgz
+          git config user.name "shorts-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q --orphan voice-lab-out
+          git rm -rq --cached . && rm -f lab.tgz
+          cp /tmp/lab.tgz.gpg . && git add lab.tgz.gpg && git commit -qm "voice lab $(date -u +%FT%H:%M)"
+          git push -qf origin HEAD:voice-lab
