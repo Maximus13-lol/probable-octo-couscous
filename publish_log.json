@@ -587,5 +587,25 @@
     "manual": false,
     "publish_at": "2026-11-20T07:00:00Z",
     "slot_date": "2026-11-20"
+  },
+  {
+    "date": "2026-11-20",
+    "run_id": "20261120_151659",
+    "video_id": "Rj5cKl5F0Ks",
+    "url": "https://youtube.com/shorts/Rj5cKl5F0Ks",
+    "title": "Дело №3: Как украли миллиард иен за три минуты? #Shorts",
+    "topic": "Как японец украл миллиард иен за 3 минуты в 1968 году",
+    "source": "youtube",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "18:00-19:30",
+    "cta_voice": null,
+    "thumbnail": "канал не подтверждён по телефону — свои обложки недоступны (youtube.com/verify)",
+    "rubric": "ТАЙНА",
+    "case": 3,
+    "question": "Как думаете, почему полиция так и не смогла найти грабителя?",
+    "manual": false,
+    "publish_at": "2026-11-20T16:12:17Z",
+    "slot_date": "2026-11-20"
   }
 ]
