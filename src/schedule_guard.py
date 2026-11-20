@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 
 from .utils import CONFIG_DIR, PUBLISH_LOG_FILE, load_json, log, setup_logging
 
-DEFAULT_CFG = {"timezone": "Europe/Moscow", "lead_minutes": 110,
+DEFAULT_CFG = {"timezone": "Europe/Moscow", "lead_minutes": 170,
                "phases": [{"slots": ["11:00", "19:00"]}]}
 
 

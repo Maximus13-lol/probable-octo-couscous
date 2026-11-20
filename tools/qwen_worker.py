@@ -111,11 +111,15 @@ def main() -> None:
         return prompts[mode]
 
     min_recall = float(job.get("min_recall", 0.85))
+    budget = float(job.get("budget_sec", 1800))  # после этого — без повторных попыток, лучший из готовых
+    t_start = time.time()
     for it in job["items"]:
         text = it["text"]
         best = None
         attempts = 0
         for mode, seed in (("icl", 1), ("icl", 7), ("icl", 23), ("xvec", 1), ("xvec", 7)):
+            if best is not None and time.time() - t_start > budget and best[0] >= min_recall - 0.1:
+                break  # время озвучки вышло — берём лучший разборчивый вариант
             attempts += 1
             torch.manual_seed(seed)
             wavs, sr = model.generate_voice_clone(text=text, language=job.get("language", "Russian"),

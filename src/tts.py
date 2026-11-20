@@ -563,6 +563,7 @@ def _synth_qwen(narr: list[dict], adir: Path) -> list[dict]:
         items.append({"id": "cta", "text": cta_cfg["voice_text"], "out": str(adir / "cta_qwen.wav")})
     job = {"model": cfg["model"], "ref_audio": str(ROOT_DIR / cfg["ref_audio"]), "ref_text": cfg["ref_text"],
            "language": cfg["language"], "min_recall": cfg["min_recall"],
+           "budget_sec": float(cfg.get("budget_min", 30)) * 60,
            "whisper_dir": str(ROOT_DIR / ".cache" / "whisper"), "items": items}
     job_path = adir / "qwen_job.json"
     save_json(job_path, job)
