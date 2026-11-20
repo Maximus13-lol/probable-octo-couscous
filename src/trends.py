@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+import json
+
 import datetime as dt
 import difflib
 import time
@@ -314,6 +316,26 @@ def _documented_hint() -> str:
             "статья в Википедии и сохранились фотографии или документы: в ролик пойдут настоящие архивные кадры.")
 
 
+def _retention_hint() -> str:
+    """Что зрители досматривают лучше: лучшие и худшие ролики канала по среднему проценту просмотра
+    (stats/report.json, обновляется ежедневно workflow stats.yml)."""
+    try:
+        from .utils import ROOT
+        d = json.loads((ROOT / "stats" / "report.json").read_text(encoding="utf-8"))
+        vids = d["videos"] if isinstance(d, dict) else d
+        rated = [v for v in vids if v.get("avg_view_pct") and (v.get("views") or 0) >= 200
+                 and not v.get("pilot") and not v.get("manual")]  # пробные/ручные — другой формат
+        if len(rated) < 6:
+            return ""
+        rated.sort(key=lambda v: v["avg_view_pct"], reverse=True)
+        fmt = lambda v: f"«{v.get('topic') or v['title']}» ({v['avg_view_pct']:.0f}%)"  # noqa: E731
+        return ("\nДанные канала — досматриваемость (средний % просмотра). Лучше всего досматривают: "
+                + "; ".join(fmt(v) for v in rated[:5]) + ". Хуже всего: " + "; ".join(fmt(v) for v in rated[-4:])
+                + ". Выбирай темы, похожие по типу на лучшие (загадка, место, люди), и избегай типа худших.")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def choose_with_gemini(cands: list[dict], used: list[dict]) -> dict:
     lines = []
     for i, c in enumerate(cands):
@@ -331,7 +353,7 @@ def choose_with_gemini(cands: list[dict], used: list[dict]) -> dict:
 Учитывай скорость, но главное — интрига, понятность русскоязычному зрителю, наличие реальной истории.
 Тема должна быть безопасной для YouTube: без жестокости и подробностей убийств, без детей в «взрослом»
 контексте (браки, любовь, насилие) и без детей-жертв, без политики, без болезней и катастроф с жертвами.
-Если кандидат — не про тайну, можно взять из него загадочный факт.{_documented_hint()}
+Если кандидат — не про тайну, можно взять из него загадочный факт.{_documented_hint()}{_retention_hint()}
 Верни JSON:
 {{"index": <номер кандидата>, "topic": "<тема по-русски, конкретно>", "topic_en": "<topic in English>",
   "hook": "<хук-вопрос по-русски, до 12 слов>", "reason": "<почему выбрана, 1-2 предложения>"}}"""

@@ -2,6 +2,8 @@ name: Channel stats
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "37 1 * * *"   # каждый день 04:37 МСК: свежая статистика для выбора тем по удержанию
 
 permissions:
   contents: write
