@@ -18,7 +18,7 @@ import time
 import traceback
 from zoneinfo import ZoneInfo
 
-from . import ads, archive, assemble, cover, cta, formats, human_voice, images, quality, narration, story, storyboard, trends, tts, uniqueness, upload
+from . import ads, archive, qa, assemble, cover, cta, formats, human_voice, images, quality, narration, story, storyboard, trends, tts, uniqueness, upload
 from .gemini import available as gemini_ok
 from .utils import OUTPUT_DIR, load_json, log, save_json, setup_logging
 
@@ -174,6 +174,7 @@ def run(args) -> int:
         final = run_dir / "final.mp4"
         shutil.copy(ad_info["video"] if ad_info else video, final)
         done("ads", t)
+        summary["qa"] = qa.check(final, voice, run_dir)  # громкость −14 LUFS + проверки; брак → QAError
 
         t = step(9, "publisher")
         asm = load_json(run_dir / "assembly.json", default={}) or {}
