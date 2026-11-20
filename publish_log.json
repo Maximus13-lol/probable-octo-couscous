@@ -607,5 +607,25 @@
     "manual": false,
     "publish_at": "2026-11-20T16:12:17Z",
     "slot_date": "2026-11-20"
+  },
+  {
+    "date": "2026-11-20",
+    "run_id": "20261120_161606",
+    "video_id": "bp3c0q-CbJo",
+    "url": "https://youtube.com/shorts/bp3c0q-CbJo",
+    "title": "Дело №4: Тайна загадочного артефакта хуэйган #Shorts",
+    "topic": "Загадочный артефакт хуэйган и его потерянная тайна",
+    "source": "google_trends",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "20:30-22:00",
+    "cta_voice": null,
+    "thumbnail": "канал не подтверждён по телефону — свои обложки недоступны (youtube.com/verify)",
+    "rubric": "ТРИ ВЕРСИИ",
+    "case": 4,
+    "question": "Какая из трёх версий кажется вам самой убедительной?",
+    "manual": false,
+    "publish_at": "2026-11-20T18:30:00Z",
+    "slot_date": "2026-11-20"
   }
 ]
