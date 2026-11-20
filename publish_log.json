@@ -567,5 +567,25 @@
     "manual": false,
     "publish_at": null,
     "slot_date": "2026-11-19"
+  },
+  {
+    "date": "2026-11-20",
+    "run_id": "20261120_053736",
+    "video_id": "fAylWgOK4to",
+    "url": "https://youtube.com/shorts/fAylWgOK4to",
+    "title": "20 ноября: Куда исчезло целое озеро в Луизиане? #Shorts",
+    "topic": "Как гигантское озеро в Луизиане внезапно исчезло в соляной шахте",
+    "source": "onthisday",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "08:30-10:00",
+    "cta_voice": null,
+    "thumbnail": "канал не подтверждён по телефону — свои обложки недоступны (youtube.com/verify)",
+    "rubric": "ЭТОТ ДЕНЬ · 20 НОЯБРЯ",
+    "case": null,
+    "question": "Как бы вы отреагировали, если бы озеро у вас на глазах ушло под землю?",
+    "manual": false,
+    "publish_at": "2026-11-20T07:00:00Z",
+    "slot_date": "2026-11-20"
   }
 ]
