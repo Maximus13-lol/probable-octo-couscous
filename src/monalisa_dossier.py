@@ -1,0 +1,90 @@
+"""Готовит тестовое досье о краже «Моны Лизы» на основе архивных источников."""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from pathlib import Path
+
+import requests
+
+from . import gemini
+
+SOURCES = {
+    "Лувр": "https://www.louvre.fr/en/explore/the-palace/from-the-mona-lisa-to-the-wedding-feast-at-cana",
+    "Каталог Лувра": "https://collections.louvre.fr/en/ark:/53355/cl010062370",
+    "Библиотека Конгресса": "https://guides.loc.gov/chronicling-america-theft-mona-lisa",
+    "Учебное досье Лувра": "https://louvrekids.louvre.fr/docs/Transcription%20textuelle%20Joconde_EN_FINAL_SRDE.pdf",
+}
+MATERIALS = [
+    ("wall.jpg", "f/f8/Mona_Lisa_stolen-1911.jpg", "Пустое место в Лувре • неизвестный фотограф • 1911"),
+    ("press.jpg", "c/cd/Stealing_Mona_Lisa.jpg", "Газетная иллюстрация • La Domenica del Corriere • 1911"),
+]
+SECTIONS = [
+    ("Пустая стена", "Двадцать первого августа 1911 года картина исчезла. Фотография пустого места показывает результат, а не момент кражи."),
+    ("Портрет до кражи", "Леонардо написал портрет, который Лувр называет портретом Лизы Герардини. Уже до пропажи портрет был ценным и известным."),
+    ("Что такое сфумато", "Лувр отмечает мягкие переходы в живописи и пейзаж. Объясни, куда смотрит зритель, и как фотография отличается от оригинала."),
+    ("Италия и Франция", "Каталог Лувра прослеживает историю портрета во французских королевских коллекциях задолго до Наполеона."),
+    ("Работа Перуджи", "Винченцо Перуджа был стекольщиком, работавшим в Лувре. Не добавляй деталей проникновения, инструментов и обхода охраны."),
+    ("Первые сообщения", "Архив Библиотеки Конгресса ведёт к публикациям американской прессы об истории. Заголовки отражали знания и предположения своего дня."),
+    ("Газетный рисунок", "Иллюстрация La Domenica del Corriere вышла в сентябре 1911 года. Это редакционная реконструкция, а не свидетельство очевидца."),
+    ("Два года без картины", "Лувр говорит о наградах и более чем двух годах без картины. Разбери, как различаются стимулы газетчиков, полиции и музея."),
+    ("Флоренция", "В декабре 1913 года Перуджа предложил картину итальянскому торговцу произведениями искусства. Связь с властями привела к её возвращению."),
+    ("Мотив и проверка", "В прессе Перуджа представлял свой поступок как возвращение картины Италии. Это заявление участника, его нельзя считать полным объяснением."),
+    ("Возвращение", "По учебному материалу Лувра, картина вернулась на своё место четвёртого января 1914 года. Библиотека Конгресса указывает на судебные сообщения июня 1914 года."),
+    ("Что изменила пропажа", "Лувр связывает кражу с ростом известности картины. Итог: архивы подтверждают отдельные части истории, а глобальная слава имеет больше одной причины."),
+]
+
+
+def prepare(root: Path) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    images = []
+    for name, remote, credit in MATERIALS:
+        response = requests.get("https://upload.wikimedia.org/wikipedia/commons/" + remote,
+                                headers={"User-Agent": "Papka13ArchivePilot/1.0 (GitHub editorial pilot)"},
+                                timeout=45)
+        response.raise_for_status()
+        (root / name).write_bytes(response.content)
+        images.append(dict(image=name, credit=credit, license="Общественное достояние",
+                           source_url="https://commons.wikimedia.org/wiki/File:" + remote.rsplit("/", 1)[1]))
+    chapters = []
+    for index in range(0, len(SECTIONS), 3):
+        batch = SECTIONS[index:index + 3]
+
+        def validate(items):
+            if not isinstance(items, list) or len(items) != len(batch):
+                return "верни массив из трёх глав"
+            for item in items:
+                if not isinstance(item, str) or not 195 <= len(item.split()) <= 235:
+                    return "в каждой главе нужно от 195 до 235 слов"
+            return None
+
+        prompt = (
+            "Русский документальный сценарий канала «Папка №13» о краже Моны Лизы. "
+            "Верни JSON-массив из трёх строк: текст рассказчика, 195–235 слов для каждой из глав. "
+            "Не пересказывай вступление в каждой главе. Не выдумывай факты, даты, диалоги или выдержки. "
+            "Расширяй материал оригинальным анализом свидетельств и связью с соседними главами. "
+            "Даты и числа пиши словами. Используй только факты из следующего редакторского досье:\n"
+            + json.dumps(SECTIONS, ensure_ascii=False)
+            + "\nНапиши только эти главы по порядку: " + json.dumps(batch, ensure_ascii=False)
+        )
+        for offset, prose in enumerate(gemini.generate_json(prompt, temperature=0.35, validate=validate)):
+            image = images[0 if index + offset in {0, 1, 2, 3, 7, 8, 10, 11} else 1]
+            words = prose.split()
+            # Нарезаем на короткие фразы, предпочитая границы предложений.
+            while words:
+                limit = min(len(words), 65)
+                end = next((i for i in range(limit, 34, -1) if re.search(r"[.!?…]$", words[i - 1])), limit)
+                chapters.append(dict(text=" ".join(words[:end]), **image))
+                words = words[end:]
+    path = root / "dossier.json"
+    path.write_text(json.dumps({"title": "Кража Моны Лизы", "headline": "Куда исчезла Мона Лиза?",
+                                "references": SOURCES, "chapters": chapters},
+                               ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output", type=Path)
+    prepare(parser.parse_args().output)
