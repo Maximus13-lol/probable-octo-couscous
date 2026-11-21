@@ -18,7 +18,7 @@ SOURCES = {
 }
 MATERIALS = [
     ("wall.jpg", "f/f8/Mona_Lisa_stolen-1911.jpg", "Пустое место в Лувре • неизвестный фотограф • 1911"),
-    ("press.jpg", "c/cd/Stealing_Mona_Lisa.jpg", "Газетная иллюстрация • La Domenica del Corriere • 1911"),
+    ("portrait.jpg", "6/6a/Mona_Lisa.jpg", "Портрет Лизы Герардини • Леонардо да Винчи • Лувр"),
 ]
 SECTIONS = [
     ("Пустая стена", "Двадцать первого августа 1911 года картина исчезла. Фотография пустого места показывает результат, а не момент кражи."),
@@ -69,7 +69,7 @@ def prepare(root: Path) -> Path:
             + "\nНапиши только эти главы по порядку: " + json.dumps(batch, ensure_ascii=False)
         )
         for offset, prose in enumerate(gemini.generate_json(prompt, temperature=0.35, validate=validate)):
-            image = images[0 if index + offset in {0, 1, 2, 3, 7, 8, 10, 11} else 1]
+            image = images[0 if index + offset in {0, 4, 5, 6, 7, 8, 9} else 1]
             words = prose.split()
             # Нарезаем на короткие фразы, предпочитая границы предложений.
             while words:
