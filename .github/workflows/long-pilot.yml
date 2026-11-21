@@ -86,3 +86,64 @@ jobs:
             output/long-pilot/sources.json
           if-no-files-found: error
           retention-days: 14
+
+  archive-pilot:
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/editorial-pilot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Select the approved one-off pilot
+        id: select
+        run: |
+          if [ "$(git log -1 --format=%s)" = "Run the approved archive voice pilot" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v6
+        if: steps.select.outputs.run == 'true'
+        with:
+          python-version: "3.11"
+      - name: Prepare and render archive pilot
+        if: steps.select.outputs.run == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          VOICE_KEY: ${{ secrets.VOICE_KEY }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          python -m pip install -r requirements.txt
+          python -m src.monalisa_dossier output/archive-dossier
+          python -m venv "$RUNNER_TEMP/qwen-venv"
+          qwen="$RUNNER_TEMP/qwen-venv/bin/python"
+          "$qwen" -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+          "$qwen" -m pip install qwen-tts==0.1.1 faster-whisper
+          test -n "$VOICE_KEY"
+          trap 'rm -f assets/voice/ref.flac' EXIT
+          gpg --batch --quiet --pinentry-mode loopback --passphrase "$VOICE_KEY" -o assets/voice/ref.flac -d assets/voice/ref.flac.gpg
+          unset VOICE_KEY
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("config/voice.json")
+          config = json.loads(path.read_text(encoding="utf-8"))
+          config["qwen"]["timeout_min"] = 260
+          config["qwen"]["budget_min"] = 180
+          path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+          PY
+          QWEN_PY="$qwen" python -m src.long_pilot output/archive-dossier/dossier.json output/archive-pilot
+          ffprobe -v error -show_entries format=duration -of default=nw=1 output/archive-pilot/pilot.mp4
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.select.outputs.run == 'true'
+        with:
+          name: archive-pilot-${{ github.run_number }}
+          path: |
+            output/archive-dossier/dossier.json
+            output/archive-pilot/pilot.mp4
+            output/archive-pilot/thumbnail.jpg
+            output/archive-pilot/sources.json
+          if-no-files-found: warn
+          retention-days: 7
