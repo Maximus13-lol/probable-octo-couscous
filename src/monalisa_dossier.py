@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 
 from . import gemini
+from .utils import setup_logging
 
 SOURCES = {
     "Лувр": "https://www.louvre.fr/en/explore/the-palace/from-the-mona-lisa-to-the-wedding-feast-at-cana",
@@ -50,8 +51,8 @@ def prepare(root: Path) -> Path:
             if not isinstance(item, dict) or not isinstance(item.get("text"), str):
                 return "нужен объект с текстом главы"
             count = len(item["text"].split())
-            if not 170 <= count <= 300:
-                return f"сейчас {count} слов, нужно около 220"
+            if not 55 <= count <= 300:
+                return f"сейчас {count} слов, нужен развёрнутый текст до 300 слов"
             return None
 
         prompt = (
@@ -64,6 +65,15 @@ def prepare(root: Path) -> Path:
             + "\nНапиши только эту главу: " + json.dumps(section, ensure_ascii=False)
         )
         prose = gemini.generate_json(prompt, temperature=0.35, validate=validate)["text"]
+        if len(prose.split()) < 190:
+            extension = gemini.generate_json(
+                prompt + "\nУже написано:\n" + prose
+                + "\nНапиши только второй абзац этой главы на 80–100 слов. "
+                + "Он должен добавить анализ или переход к следующей главе без повтора и без новых фактов.",
+                temperature=0.35, validate=validate,
+            )["text"]
+            prose += "\n\n" + extension
+        print(f"Глава {index + 1}/{len(SECTIONS)}: {len(prose.split())} слов", flush=True)
         image = images[0 if index in {0, 4, 5, 6, 7, 8, 9} else 1]
         words = prose.split()
         # Нарезаем на короткие фразы, предпочитая границы предложений.
@@ -82,4 +92,5 @@ def prepare(root: Path) -> Path:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("output", type=Path)
+    setup_logging()
     prepare(parser.parse_args().output)
