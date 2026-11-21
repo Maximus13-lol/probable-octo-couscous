@@ -44,35 +44,34 @@ def prepare(root: Path) -> Path:
         images.append(dict(image=name, credit=credit, license="Общественное достояние",
                            source_url="https://commons.wikimedia.org/wiki/File:" + remote.rsplit("/", 1)[1]))
     chapters = []
-    for index in range(0, len(SECTIONS), 3):
-        batch = SECTIONS[index:index + 3]
+    for index, section in enumerate(SECTIONS):
 
-        def validate(items):
-            if not isinstance(items, list) or len(items) != len(batch):
-                return "верни массив из трёх глав"
-            for item in items:
-                if not isinstance(item, str) or not 195 <= len(item.split()) <= 235:
-                    return "в каждой главе нужно от 195 до 235 слов"
+        def validate(item):
+            if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+                return "нужен объект с текстом главы"
+            count = len(item["text"].split())
+            if not 170 <= count <= 300:
+                return f"сейчас {count} слов, нужно около 220"
             return None
 
         prompt = (
             "Русский документальный сценарий канала «Папка №13» о краже Моны Лизы. "
-            "Верни JSON-массив из трёх строк: текст рассказчика, 195–235 слов для каждой из глав. "
+            "Верни JSON-объект с полем text: цельный текст рассказчика для одной главы, примерно 220 слов. "
             "Не пересказывай вступление в каждой главе. Не выдумывай факты, даты, диалоги или выдержки. "
             "Расширяй материал оригинальным анализом свидетельств и связью с соседними главами. "
             "Даты и числа пиши словами. Используй только факты из следующего редакторского досье:\n"
             + json.dumps(SECTIONS, ensure_ascii=False)
-            + "\nНапиши только эти главы по порядку: " + json.dumps(batch, ensure_ascii=False)
+            + "\nНапиши только эту главу: " + json.dumps(section, ensure_ascii=False)
         )
-        for offset, prose in enumerate(gemini.generate_json(prompt, temperature=0.35, validate=validate)):
-            image = images[0 if index + offset in {0, 4, 5, 6, 7, 8, 9} else 1]
-            words = prose.split()
-            # Нарезаем на короткие фразы, предпочитая границы предложений.
-            while words:
-                limit = min(len(words), 65)
-                end = next((i for i in range(limit, 34, -1) if re.search(r"[.!?…]$", words[i - 1])), limit)
-                chapters.append(dict(text=" ".join(words[:end]), **image))
-                words = words[end:]
+        prose = gemini.generate_json(prompt, temperature=0.35, validate=validate)["text"]
+        image = images[0 if index in {0, 4, 5, 6, 7, 8, 9} else 1]
+        words = prose.split()
+        # Нарезаем на короткие фразы, предпочитая границы предложений.
+        while words:
+            limit = min(len(words), 65)
+            end = next((i for i in range(limit, 34, -1) if re.search(r"[.!?…]$", words[i - 1])), limit)
+            chapters.append(dict(text=" ".join(words[:end]), **image))
+            words = words[end:]
     path = root / "dossier.json"
     path.write_text(json.dumps({"title": "Кража Моны Лизы", "headline": "Куда исчезла Мона Лиза?",
                                 "references": SOURCES, "chapters": chapters},
