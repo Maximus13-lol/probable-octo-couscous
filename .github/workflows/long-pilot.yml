@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'src/long_*.py'
+      - 'src/monalisa_dossier.py'
       - 'src/trends.py'
       - 'src/tts.py'
       - '.github/workflows/long-pilot.yml'
