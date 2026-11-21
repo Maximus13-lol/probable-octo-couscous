@@ -1,0 +1,108 @@
+name: Long video release queue
+
+on:
+  schedule:
+    - cron: "17 0,4,8,12,16,20 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: long-video-release
+  cancel-in-progress: false
+
+jobs:
+  stage:
+    if: vars.LONG_PUBLICATION_ENABLED == 'true' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    env:
+      LONG_PUBLICATION_ENABLED: ${{ vars.LONG_PUBLICATION_ENABLED }}
+      RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Select the next approved dossier
+        id: selection
+        run: |
+          python -m pip install "Pillow>=10,<12"
+          python -m src.long_release select long > "$RUNNER_TEMP/episode.json"
+          if [ "$(cat "$RUNNER_TEMP/episode.json")" != null ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Render with the author voice
+        if: steps.selection.outputs.ready == 'true'
+        env:
+          VOICE_KEY: ${{ secrets.VOICE_KEY }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          python -m pip install -r requirements.txt
+          python -m venv "$RUNNER_TEMP/qwen-venv"
+          qwen="$RUNNER_TEMP/qwen-venv/bin/python"
+          "$qwen" -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+          "$qwen" -m pip install qwen-tts==0.1.1 faster-whisper
+          test -n "$VOICE_KEY"
+          trap 'rm -f assets/voice/ref.flac' EXIT
+          gpg --batch --quiet --pinentry-mode loopback --passphrase "$VOICE_KEY" -o assets/voice/ref.flac -d assets/voice/ref.flac.gpg
+          unset VOICE_KEY
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("config/voice.json")
+          config = json.loads(path.read_text(encoding="utf-8"))
+          config["qwen"]["timeout_min"] = 260
+          config["qwen"]["budget_min"] = 180
+          path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+          PY
+          QWEN_PY="$qwen" python -m src.long_release render "$RUNNER_TEMP/episode.json"
+          git restore -- config/voice.json
+          duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/long-release/pilot.mp4)
+          python -c 'import sys; d = float(sys.argv[1]); sys.exit(0 if 1020 <= d <= 1380 else f"Unexpected runtime: {d:.0f}s")' "$duration"
+      - name: Reserve delivery before contacting YouTube
+        if: steps.selection.outputs.ready == 'true'
+        id: reserve
+        run: |
+          episode=$(python -c 'import json,sys; print("{:04d}".format(json.load(open(sys.argv[1]))["episode"]))' "$RUNNER_TEMP/episode.json")
+          file="long/delivery/$episode.json"
+          git pull --rebase origin "$RELEASE_BRANCH"
+          test ! -e "$file"
+          mkdir -p long/delivery
+          printf '{"state":"pending","run_id":"%s"}\n' "$GITHUB_RUN_ID" > "$file"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "$file"
+          git commit -m "Reserve long episode $episode [skip ci]"
+          git push origin "HEAD:$RELEASE_BRANCH"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+      - name: Schedule the video and save its YouTube ID
+        if: steps.reserve.outputs.file != ''
+        env:
+          DELIVERY_FILE: ${{ steps.reserve.outputs.file }}
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          python -m src.long_release deliver "$RUNNER_TEMP/episode.json"
+          cp output/long-release/delivery.json "$DELIVERY_FILE"
+          git add -- "$DELIVERY_FILE"
+          git commit -m 'Record scheduled long episode [skip ci]'
+          for attempt in 1 2 3; do
+            git pull --rebase origin "$RELEASE_BRANCH" && git push origin "HEAD:$RELEASE_BRANCH" && exit 0
+            sleep 10
+          done
+          exit 1
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.selection.outputs.ready == 'true'
+        with:
+          name: long-release-${{ github.run_number }}
+          path: |
+            output/long-release/thumbnail.jpg
+            output/long-release/delivery.json
+            output/long-release/upload_result.json
+          if-no-files-found: ignore
