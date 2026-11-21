@@ -42,7 +42,10 @@ def config() -> dict:
     return c
 
 
-def today_msk() -> dt.date:
+def publication_day() -> dt.date:
+    slot_date = env("SLOT_DATE")
+    if slot_date:
+        return dt.date.fromisoformat(slot_date)
     return dt.datetime.now(ZoneInfo("Europe/Moscow")).date()
 
 
@@ -54,7 +57,7 @@ def current() -> str:
     kind = config()["slots"].get(env("SLOT") or "", "case")
     if kind == "morning":
         rot = config()["morning_rotation"]
-        return rot[today_msk().toordinal() % len(rot)]
+        return rot[publication_day().toordinal() % len(rot)]
     return kind
 
 
@@ -80,7 +83,7 @@ def _onthisday(day: dt.date) -> list[dict]:
 
 
 def this_day_topic(exclude: list[str] | None = None) -> dict:
-    day = today_msk()
+    day = publication_day()
     date_ru = f"{day.day} {MONTHS[day.month - 1]}"
     events = _onthisday(day)
     used = load_used_topics() + [{"topic": t} for t in (exclude or [])]
@@ -96,7 +99,7 @@ def this_day_topic(exclude: list[str] | None = None) -> dict:
             return "эта тема уже была"
         return None
 
-    obj = gemini.generate_json(f"""Канал «Папка №13» — реальные тайны и загадочные случаи. Сегодня {date_ru}.
+    obj = gemini.generate_json(f"""Канал «Папка №13» — реальные тайны и загадочные случаи. Выпуск на {date_ru}.
 События, случившиеся в этот день (год: событие | статьи Википедии):
 {listing}
 

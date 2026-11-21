@@ -203,7 +203,7 @@ def run(args) -> int:
                 "thumbnail": summary.get("thumbnail"), "rubric": st.get("rubric"), "case": st.get("case"),
                 "question": st.get("question") or None,
                 "manual": os.environ.get("GUARD_SCHEDULED", "").lower() != "true", "publish_at": res.get("publish_at"),
-                "slot_date": dt.datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat(),
+                "slot_date": os.environ.get("SLOT_DATE") or dt.datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat(),
             })
             if ad_info:
                 ads.log_impression(ad_info, res["url"], meta["title"])
