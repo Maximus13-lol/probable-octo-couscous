@@ -627,5 +627,25 @@
     "manual": false,
     "publish_at": "2026-11-20T18:30:00Z",
     "slot_date": "2026-11-20"
+  },
+  {
+    "date": "2026-11-21",
+    "run_id": "20261121_190904",
+    "video_id": "TDsXOH1lM5M",
+    "url": "https://youtube.com/shorts/TDsXOH1lM5M",
+    "title": "Правда или миф: Проклятие Тутанхамона: правда или миф? #Shorts",
+    "topic": "Гробницу Тутанхамона охраняло древнее проклятие, которое убивало всех археологов",
+    "source": "myth",
+    "privacy": "public",
+    "ad_campaign": null,
+    "slot": "08:30-10:00",
+    "cta_voice": null,
+    "thumbnail": "канал не подтверждён по телефону — свои обложки недоступны (youtube.com/verify)",
+    "rubric": "ПРАВДА ИЛИ МИФ",
+    "case": null,
+    "question": "А вы верите в древние проклятия или доверяете только науке?",
+    "manual": false,
+    "publish_at": null,
+    "slot_date": "2026-11-21"
   }
 ]
