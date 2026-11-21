@@ -639,10 +639,12 @@ def providers() -> list[str]:
     return [p for p in order if ok[p]]
 
 
-def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False) -> list[dict]:
+def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False, *, author_only: bool = False) -> list[dict]:
     adir = run_dir / "audio"
     adir.mkdir(parents=True, exist_ok=True)
-    provs = providers()
+    if author_only and not qwen_available():
+        raise TtsFatal("Недоступна озвучка голосом автора")
+    provs = ["qwen"] if author_only else providers()
     if not provs:
         if not allow_silent:
             raise TtsFatal("Нет ключей озвучки: задайте GEMINI_API_KEY (Gemini TTS) или AZURE_SPEECH_KEY/REGION")

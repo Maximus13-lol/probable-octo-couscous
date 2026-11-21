@@ -1,0 +1,88 @@
+name: Long video pilot (no upload)
+
+on:
+  pull_request:
+    paths:
+      - 'src/long_*.py'
+      - 'src/trends.py'
+      - 'src/tts.py'
+      - '.github/workflows/long-pilot.yml'
+  workflow_dispatch:
+    inputs:
+      dossier:
+        description: "Путь к досье JSON в репозитории. Пусто = технический тест."
+        type: string
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      DOSSIER: ${{ inputs.dossier }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install FFmpeg and fonts
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
+      - name: Test horizontal render and preview
+        if: env.DOSSIER == ''
+        run: |
+          python -m pip install "Pillow>=10,<12"
+          python -m compileall -q src
+          mkdir -p output/fixture
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from PIL import Image
+          root = Path("output/fixture")
+          Image.new("RGB", (960, 640), "#32465b").save(root / "frame.jpg")
+          chapter = dict(text="Тестовая глава.", image="frame.jpg", credit="Тест",
+                         license="Синтетическая иллюстрация", source_url="https://example.com")
+          (root / "dossier.json").write_text(json.dumps(dict(title="Тест", headline="Тайна архива",
+               chapters=[chapter, chapter]), ensure_ascii=False), encoding="utf-8")
+          PY
+          python -m src.long_pilot output/fixture/dossier.json output/long-pilot --smoke
+          python - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          preview = Path("output/long-pilot/thumbnail.jpg")
+          with Image.open(preview) as image:
+              assert image.size == (1280, 720)
+          assert preview.stat().st_size <= 2_000_000
+          PY
+          ffprobe -v error -show_entries stream=codec_type,width,height -of json output/long-pilot/pilot.mp4
+      - name: Render editor-approved dossier with the author voice
+        if: github.event_name == 'workflow_dispatch' && env.DOSSIER != ''
+        env:
+          VOICE_KEY: ${{ secrets.VOICE_KEY }}
+        run: |
+          python -m pip install -r requirements.txt
+          python -m venv "$RUNNER_TEMP/qwen-venv"
+          qwen="$RUNNER_TEMP/qwen-venv/bin/python"
+          "$qwen" -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+          "$qwen" -m pip install qwen-tts==0.1.1 faster-whisper
+          test -n "$VOICE_KEY"
+          trap 'rm -f assets/voice/ref.flac' EXIT
+          gpg --batch --quiet --pinentry-mode loopback --passphrase "$VOICE_KEY" \
+            -o assets/voice/ref.flac -d assets/voice/ref.flac.gpg
+          unset VOICE_KEY
+          QWEN_PY="$qwen" python -m src.long_pilot "$DOSSIER" output/long-pilot
+      - uses: actions/upload-artifact@v4
+        with:
+          name: long-pilot-${{ github.run_number }}
+          path: |
+            output/long-pilot/pilot.mp4
+            output/long-pilot/thumbnail.jpg
+            output/long-pilot/sources.json
+          if-no-files-found: error
+          retention-days: 14
