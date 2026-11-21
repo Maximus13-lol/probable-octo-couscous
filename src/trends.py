@@ -328,9 +328,11 @@ def _retention_hint() -> str:
         if len(rated) < 6:
             return ""
         rated.sort(key=lambda v: v["avg_view_pct"], reverse=True)
+        best = rated[:5]
+        worst = rated[max(len(best), len(rated) - 4):]
         fmt = lambda v: f"«{v.get('topic') or v['title']}» ({v['avg_view_pct']:.0f}%)"  # noqa: E731
         return ("\nДанные канала — досматриваемость (средний % просмотра). Лучше всего досматривают: "
-                + "; ".join(fmt(v) for v in rated[:5]) + ". Хуже всего: " + "; ".join(fmt(v) for v in rated[-4:])
+                + "; ".join(fmt(v) for v in best) + ". Хуже всего: " + "; ".join(fmt(v) for v in worst)
                 + ". Выбирай темы, похожие по типу на лучшие (загадка, место, люди), и избегай типа худших.")
     except Exception:  # noqa: BLE001
         return ""
