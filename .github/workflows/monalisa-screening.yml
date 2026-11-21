@@ -1,0 +1,128 @@
+name: Mona Lisa link-only screening
+on:
+  pull_request:
+    paths: ['.github/workflows/monalisa-screening.yml']
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: monalisa-link-only-screening
+  cancel-in-progress: false
+
+jobs:
+  screening:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/editorial-pilot'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - id: approved
+        run: |
+          if [ "$(git log -1 --format=%s)" = "Upload the approved Mona Lisa screening as unlisted" ]; then echo "yes=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/download-artifact@v4
+        if: steps.approved.outputs.yes == 'true'
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44950723394
+          name: monalisa-full-fira
+          path: work
+      - name: Recreate the approved music mix and prepare metadata
+        if: steps.approved.outputs.yes == 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          python -m pip install google-api-python-client google-auth google-auth-oauthlib requests
+          python - <<'PY'
+          import array, math, wave
+          from pathlib import Path
+          sr=22050
+          tracks=[
+           ("archive", [(48,55,60,63),(44,51,56,60),(51,58,63,67),(46,53,58,62)], 8, .13),
+           ("investigation", [(45,52,57,60),(41,48,53,57),(48,55,60,64),(43,50,55,59)], 6, .19),
+           ("discovery", [(48,55,60,64),(43,50,55,59),(45,52,57,60),(41,48,53,57)], 7, .16),
+           ("epilogue", [(48,55,60,64),(45,52,57,60),(41,48,53,57),(43,50,55,62)], 9, .12),
+          ]
+          tau=math.tau
+          for name,chords,bar,pluck in tracks:
+              samples=array.array('h')
+              for chord in chords:
+                  freq=[tau*440*2**((n-69)/12) for n in chord]
+                  for i in range(sr*bar):
+                      t=i/sr
+                      env=min(1,t/.8,(bar-t)/1.2)
+                      bed=sum(math.sin(f*t)*v for f,v in zip(freq,(.29,.18,.12,.09)))
+                      beat=bar/4
+                      hit=int(t/beat)
+                      local=t-hit*beat
+                      f=freq[(0,2,1,3)[hit]]*2
+                      tone=(math.sin(f*local)+.22*math.sin(2*f*local))*min(1,local/.027)*math.exp(-3.6*local)
+                      samples.append(int(21800*(env*bed+pluck*tone)*min(1,(bar-t)/.15)))
+              with wave.open(str(Path("work") / f"monalisa-{name}.wav"),"wb") as out:
+                  out.setparams((1,2,sr,0,"NONE","not compressed"))
+                  out.writeframes(samples.tobytes())
+          PY
+          ffmpeg -hide_banner -v error -nostdin -y -i work/monalisa.mp4 -stream_loop -1 -i work/monalisa-archive.wav -stream_loop -1 -i work/monalisa-investigation.wav -stream_loop -1 -i work/monalisa-discovery.wav -stream_loop -1 -i work/monalisa-epilogue.wav -filter_complex '[0:a]adeclick=w=20:o=75:t=2[a];[1:a]atrim=duration=365,afade=t=in:d=3,afade=t=out:st=357:d=8[b1];[2:a]atrim=duration=455,afade=t=in:d=8,afade=t=out:st=447:d=8,adelay=357000:all=1[b2];[3:a]atrim=duration=467,afade=t=in:d=8,afade=t=out:st=459:d=8,adelay=804000:all=1[b3];[4:a]atrim=duration=351,afade=t=in:d=8,afade=t=out:st=342:d=9,adelay=1263000:all=1[b4];[b1][b2][b3][b4]amix=inputs=4:normalize=0,volume=-26dB[m];[a][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=false:latency=true[out]' -map 0:v:0 -map '[out]' -c:v copy -c:a aac -b:a 192k -movflags +faststart work/screening.mp4
+      - name: Upload with link-only access and set the cover
+        if: steps.approved.outputs.yes == 'true'
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from googleapiclient.http import MediaFileUpload
+          from src.cover import set_thumbnail
+          from src.upload import get_youtube_client
+
+          title = 'Кто украл Мону Лизу? Как пропажа картины потрясла Лувр'
+          description = (
+              'Двадцать первого августа 1911 года из Лувра исчезла «Мона Лиза». '
+              'Что известно о пропаже и как картину нашли спустя два года? '
+              'В этом выпуске «Папки №13» восстанавливаем хронологию и сверяем версии с архивами.\n\n'
+              'Источники\n'
+              'Лувр — https://www.louvre.fr/en/explore/the-palace/from-the-mona-lisa-to-the-wedding-feast-at-cana\n'
+              'Библиотека Конгресса — https://guides.loc.gov/chronicling-america-theft-mona-lisa\n\n'
+              'Изображения\n'
+              'Пустое место в Лувре — https://commons.wikimedia.org/wiki/File:Mona_Lisa_stolen-1911.jpg\n'
+              'Портрет Лизы Герардини — https://commons.wikimedia.org/wiki/File:Mona_Lisa.jpg\n\n'
+              'Озвучка синтезирована на основе авторского голоса. Музыка создана для выпуска.\n\n'
+              '#МонаЛиза #ИсторияИскусства #Папка13'
+          )
+          yt = get_youtube_client()
+          if yt is None:
+              raise RuntimeError("YouTube credentials are unavailable")
+          channel = yt.channels().list(part="contentDetails", mine=True).execute()["items"][0]
+          uploads = channel["contentDetails"]["relatedPlaylists"]["uploads"]
+          items = yt.playlistItems().list(part="snippet", playlistId=uploads, maxResults=50).execute()["items"]
+          existing = next((item["snippet"]["resourceId"]["videoId"] for item in items
+                           if item["snippet"].get("title") == title), None)
+          body = {
+              "snippet": {"title": title, "description": description, "categoryId": "27",
+                          "defaultLanguage": "ru", "defaultAudioLanguage": "ru",
+                          "tags": ["Мона Лиза", "Лувр", "кража Моны Лизы", "Леонардо да Винчи", "Папка №13"]},
+              "status": {"privacyStatus": "unlisted", "selfDeclaredMadeForKids": False,
+                         "containsSyntheticMedia": True, "embeddable": True},
+          }
+          if existing:
+              video_id = existing
+          else:
+              media = MediaFileUpload("work/screening.mp4", mimetype="video/mp4", chunksize=8*1024*1024, resumable=True)
+              request = yt.videos().insert(part="snippet,status", body=body, media_body=media, notifySubscribers=False)
+              result = None
+              while result is None:
+                  _, result = request.next_chunk(num_retries=5)
+              video_id = result["id"]
+          result = yt.videos().list(part="status", id=video_id).execute()["items"][0]["status"]
+          if result["privacyStatus"] != "unlisted":
+              raise RuntimeError(f"Review video {video_id} has visibility {result['privacyStatus']}")
+          thumbnail = set_thumbnail(video_id, Path("work/thumbnail.jpg"))
+          print(json.dumps({"url": f"https://www.youtube.com/watch?v={video_id}",
+                            "privacy": result["privacyStatus"], "thumbnail": thumbnail}, ensure_ascii=False))
+          PY
