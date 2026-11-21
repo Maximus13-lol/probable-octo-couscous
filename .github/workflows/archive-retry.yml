@@ -12,7 +12,7 @@ jobs:
   narration:
     if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/editorial-pilot'
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 180
     strategy:
       fail-fast: false
       matrix:
@@ -24,16 +24,37 @@ jobs:
       - uses: actions/checkout@v5
         with:
           persist-credentials: false
+      - name: Check for an already rendered section
+        id: saved
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          until [ "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/44944899089" --jq '.status')" = "completed" ]; do
+            sleep 30
+          done
+          if gh api "repos/$GITHUB_REPOSITORY/actions/runs/44944899089/artifacts?name=monalisa-part-$PART" --jq '.artifacts[] | select(.expired == false) | .id' | grep -q '[0-9]'; then
+            echo 'found=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.saved.outputs.found == 'true'
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44944899089
+          name: monalisa-part-${{ matrix.part }}
+          path: output/part
       - uses: actions/setup-python@v6
+        if: steps.saved.outputs.found != 'true'
         with:
           python-version: "3.11"
       - uses: actions/download-artifact@v4
+        if: steps.saved.outputs.found != 'true'
         with:
           github-token: ${{ github.token }}
           run-id: 44904923677
           name: archive-pilot-13
           path: work/previous
       - name: Select a contiguous section of the approved dossier
+        if: steps.saved.outputs.found != 'true'
         run: |
           mkdir -p work/part
           cp assets/archive-pilot/*.jpg work/part/
@@ -49,6 +70,7 @@ jobs:
           Path("work/part/dossier.json").write_text(json.dumps(dossier, ensure_ascii=False), encoding="utf-8")
           PY
       - name: Install author-voice dependencies
+        if: steps.saved.outputs.found != 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg fonts-dejavu-core
@@ -57,6 +79,7 @@ jobs:
           "$RUNNER_TEMP/qwen/bin/pip" install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
           "$RUNNER_TEMP/qwen/bin/pip" install qwen-tts==0.1.1 faster-whisper
       - name: Render with the configured author voice
+        if: steps.saved.outputs.found != 'true'
         env:
           VOICE_KEY: ${{ secrets.VOICE_KEY }}
         run: |
@@ -64,6 +87,15 @@ jobs:
           trap 'rm -f assets/voice/ref.flac' EXIT
           gpg --batch --quiet --pinentry-mode loopback --passphrase "$VOICE_KEY" -o assets/voice/ref.flac -d assets/voice/ref.flac.gpg
           unset VOICE_KEY
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("config/voice.json")
+          config = json.loads(path.read_text(encoding="utf-8"))
+          config["qwen"]["timeout_min"] = 125
+          config["qwen"]["budget_min"] = 14
+          path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+          PY
           QWEN_PY="$RUNNER_TEMP/qwen/bin/python" python - <<'PY'
           import json, os
           from pathlib import Path
