@@ -10,14 +10,12 @@ from .cover import YELLOW
 
 SIZE = (1280, 720)
 MAX_BYTES = 2_000_000
-FONT_PATH = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "Oswald.ttf"
+FONT_PATH = Path(__file__).resolve().parents[1] / "assets" / "fonts" / "FiraSansCondensed-ExtraBold.ttf"
 DARK = "#101319"
 
 
-def _font(size: int, weight: int = 700) -> ImageFont.FreeTypeFont:
-    font = ImageFont.truetype(str(FONT_PATH), size)
-    font.set_variation_by_axes([weight])
-    return font
+def _font(size: int) -> ImageFont.FreeTypeFont:
+    return ImageFont.truetype(str(FONT_PATH), size)
 
 
 def _photo(path: Path) -> Image.Image:
@@ -60,7 +58,7 @@ def make_preview(source: Path, headline: str, output: Path, *, subject: Path | N
         raise ValueError("Нужен заголовок превью")
     image = _backdrop(source, subject)
     draw = ImageDraw.Draw(image)
-    brand = _font(32, 600)
+    brand = _font(32)
     draw.rectangle((63, 67, 71, 113), fill=YELLOW)
     draw.text((88, 90), "ПАПКА №13", font=brand, fill="white", anchor="lm", stroke_width=1, stroke_fill=DARK)
     width = 625 if subject else 700
