@@ -337,6 +337,8 @@ def _retention_hint() -> str:
 
 
 def choose_with_gemini(cands: list[dict], used: list[dict]) -> dict:
+    cands = cands[:12]
+    criteria = {"hook": 3, "evidence": 3, "visuals": 2, "channel_fit": 2}
     lines = []
     for i, c in enumerate(cands):
         m = c["metrics"]
@@ -349,20 +351,46 @@ def choose_with_gemini(cands: list[dict], used: list[dict]) -> dict:
 
 Уже использованные темы (НЕЛЬЗЯ повторять, даже в другой формулировке): {used_list}
 
-Выбери ОДНУ тему, из которой выйдет самый сильный хук-загадка для 60-секундной истории.
-Учитывай скорость, но главное — интрига, понятность русскоязычному зрителю, наличие реальной истории.
+Оцени каждого кандидата от 0 до 5 по четырём признакам: hook — конкретный вопрос
+с ответом в финале, evidence — возможность проверить историю по источникам,
+visuals — наличие осмысленного визуального ряда, channel_fit — интерес для аудитории канала.
+Не утверждай, что источник или архивный кадр проверен, если это следует только из заголовка.
+Выбери подходящую тему с максимальной взвешенной оценкой: 3*hook + 3*evidence + 2*visuals + 2*channel_fit.
+Для неподходящих тем дай eligible=false и кратко объясни причину.
 Тема должна быть безопасной для YouTube: без жестокости и подробностей убийств, без детей в «взрослом»
 контексте (браки, любовь, насилие) и без детей-жертв, без политики, без болезней и катастроф с жертвами.
 Если кандидат — не про тайну, можно взять из него загадочный факт.{_documented_hint()}{_retention_hint()}
 Верни JSON:
 {{"index": <номер кандидата>, "topic": "<тема по-русски, конкретно>", "topic_en": "<topic in English>",
-  "hook": "<хук-вопрос по-русски, до 12 слов>", "reason": "<почему выбрана, 1-2 предложения>"}}"""
+  "hook": "<хук-вопрос по-русски, до 12 слов>", "reason": "<почему выбрана, 1-2 предложения>",
+  "assessments": [{{"index": 0, "hook": 0, "evidence": 0, "visuals": 0, "channel_fit": 0,
+                   "eligible": true, "reason": "<оценка кандидата>"}}]}}"""
 
     def validate(obj):
         if not isinstance(obj, dict) or not obj.get("topic"):
             return "нет поля topic"
         if not isinstance(obj.get("index"), int) or not 0 <= obj["index"] < len(cands):
             return f"index должен быть от 0 до {len(cands) - 1}"
+        scores = {}
+        assessments = obj.get("assessments")
+        if not isinstance(assessments, list) or len(assessments) != len(cands):
+            return "нужна оценка каждого кандидата"
+        seen = set()
+        for row in assessments:
+            if not isinstance(row, dict):
+                return "оценка должна быть объектом"
+            index = row.get("index")
+            if type(index) is not int or index not in range(len(cands)) or index in seen:
+                return "индексы оценок должны быть уникальными и соответствовать кандидатам"
+            seen.add(index)
+            if type(row.get("eligible")) is not bool or not isinstance(row.get("reason"), str) or not row["reason"].strip():
+                return "укажи пригодность и причину по каждому кандидату"
+            if any(type(row.get(key)) is not int or not 0 <= row[key] <= 5 for key in criteria):
+                return "оценки должны быть целыми числами от 0 до 5"
+            if row["eligible"]:
+                scores[index] = sum(row[key] * weight for key, weight in criteria.items())
+        if obj["index"] not in scores or scores[obj["index"]] != max(scores.values()):
+            return "выбери подходящего кандидата с максимальной суммой"
         if is_used(obj["topic"], used):
             return f"тема «{obj['topic']}» уже использовалась"
         return None
@@ -412,6 +440,10 @@ def scout(run_dir: Path, forced_topic: str | None = None, exclude: list[str] | N
             except Exception as exc:  # noqa: BLE001
                 log.warning("Gemini не смог выбрать тему: %s", exc)
                 break
+            report.setdefault("editorial_assessments", []).append([
+                {**row, "title": pool[row["index"]]["title"], "url": pool[row["index"]].get("url")}
+                for row in g["assessments"]
+            ])
             c = pool[g["index"]]
             dup = uniqueness.gemini_duplicate(g["topic"], g.get("hook", ""), used)
             if dup:
