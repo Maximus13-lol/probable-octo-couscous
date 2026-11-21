@@ -647,5 +647,25 @@
     "manual": false,
     "publish_at": null,
     "slot_date": "2026-11-21"
+  },
+  {
+    "date": "2026-11-21",
+    "run_id": "20261121_200431",
+    "video_id": "2cNlOJCsoyo",
+    "url": "https://youtube.com/shorts/2cNlOJCsoyo",
+    "title": "Дело №5: Загадочные поезда Китая, которые пугают инженеров #Shorts",
+    "topic": "Таинственные китайские поезда, едущие по необычным маршрутам",
+    "source": "youtube",
+    "privacy": "public",
+    "ad_campaign": null,
+    "slot": "18:00-19:30",
+    "cta_voice": null,
+    "thumbnail": "канал не подтверждён по телефону — свои обложки недоступны (youtube.com/verify)",
+    "rubric": "ТАЙНА",
+    "case": 5,
+    "question": "Как вы думаете, куда исчезают поезда с радаров?",
+    "manual": false,
+    "publish_at": null,
+    "slot_date": "2026-11-22"
   }
 ]
