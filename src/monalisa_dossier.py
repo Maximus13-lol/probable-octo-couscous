@@ -83,7 +83,8 @@ def prepare(root: Path) -> Path:
             chapters.append(dict(text=" ".join(words[:end]), **image))
             words = words[end:]
     path = root / "dossier.json"
-    path.write_text(json.dumps({"title": "Кража Моны Лизы", "headline": "Куда исчезла Мона Лиза?",
+    path.write_text(json.dumps({"title": "Кража Моны Лизы", "headline": "Кто украл Мону Лизу?",
+                                "preview_image": "portrait.jpg",
                                 "references": SOURCES, "chapters": chapters},
                                ensure_ascii=False, indent=2), encoding="utf-8")
     return path

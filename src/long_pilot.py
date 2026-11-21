@@ -13,6 +13,13 @@ from .long_preview import SIZE, make_preview
 from .utils import find_font
 
 
+def dossier_image(root: Path, relative_path: str) -> Path:
+    image = (root / relative_path).resolve()
+    if not image.is_relative_to(root.resolve()) or not image.is_file():
+        raise ValueError("Изображение должно находиться рядом с досье или в его подпапке")
+    return image
+
+
 def read_dossier(path: Path) -> dict:
     dossier = json.loads(path.read_text(encoding="utf-8"))
     for key in ("title", "headline"):
@@ -28,10 +35,12 @@ def read_dossier(path: Path) -> dict:
         url = urlsplit(chapter["source_url"])
         if url.scheme != "https" or not url.hostname:
             raise ValueError("Глава: укажите HTTPS-адрес источника")
-        image = (path.parent / chapter["image"]).resolve()
-        if not image.is_relative_to(path.parent.resolve()) or not image.is_file():
-            raise ValueError("Глава: изображение должно находиться рядом с досье или в его подпапке")
-        chapter["image_path"] = image
+        chapter["image_path"] = dossier_image(path.parent, chapter["image"])
+    if "preview_image" in dossier:
+        subject = dossier["preview_image"]
+        if not isinstance(subject, str) or not subject.strip():
+            raise ValueError("Досье: preview_image должен содержать путь к изображению")
+        dossier["preview_path"] = dossier_image(path.parent, subject)
     return dossier
 
 
@@ -57,7 +66,8 @@ def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
     chapters = dossier["chapters"]
-    make_preview(chapters[0]["image_path"], dossier["headline"], output / "thumbnail.jpg")
+    make_preview(chapters[0]["image_path"], dossier["headline"], output / "thumbnail.jpg",
+                 subject=dossier.get("preview_path"))
     if smoke:
         audio = output / "test-tone.wav"
         ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=1", str(audio))
