@@ -34,7 +34,15 @@ jobs:
           python -m src.long_release select long > "$RUNNER_TEMP/episode.json"
           if [ "$(cat "$RUNNER_TEMP/episode.json")" != null ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
+            episode=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["episode"])' "$RUNNER_TEMP/episode.json")
+            echo "episode=$episode" >> "$GITHUB_OUTPUT"
           fi
+      - uses: actions/cache/restore@v4
+        if: steps.selection.outputs.ready == 'true'
+        with:
+          path: output/long-release/audio/qwen-checkpoints
+          key: long-qwen-v1-${{ steps.selection.outputs.episode }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: long-qwen-v1-${{ steps.selection.outputs.episode }}-
       - name: Render with the author voice
         if: steps.selection.outputs.ready == 'true'
         env:
@@ -64,6 +72,11 @@ jobs:
           git restore -- config/voice.json
           duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/long-release/pilot.mp4)
           python -c 'import sys; d = float(sys.argv[1]); sys.exit(0 if 1020 <= d <= 1380 else f"Unexpected runtime: {d:.0f}s")' "$duration"
+      - uses: actions/cache/save@v4
+        if: always() && steps.selection.outputs.ready == 'true' && hashFiles('output/long-release/audio/qwen-checkpoints/*.json') != ''
+        with:
+          path: output/long-release/audio/qwen-checkpoints
+          key: long-qwen-v1-${{ steps.selection.outputs.episode }}-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Reserve delivery before contacting YouTube
         if: steps.selection.outputs.ready == 'true'
         id: reserve

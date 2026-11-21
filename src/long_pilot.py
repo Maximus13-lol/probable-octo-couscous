@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -62,6 +63,19 @@ def render_frame(chapter: dict, path: Path) -> None:
     frame.save(path)
 
 
+def narration_scenes(chapters: list[dict]) -> list[dict]:
+    scenes = []
+    for chapter in chapters:
+        words = chapter["text"].split()
+        while words:
+            limit = min(len(words), 32)
+            if limit < len(words):
+                limit = next((i for i in range(limit, 15, -1) if re.search(r"[.!?…,:;]$", words[i - 1])), limit)
+            scenes.append({**chapter, "text": " ".join(words[:limit]), "index": len(scenes) + 1})
+            words = words[limit:]
+    return scenes
+
+
 def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -75,10 +89,8 @@ def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
     else:
         from . import narration, tts
 
-        board = {"scenes": [
-            {"index": index, "text": chapter["text"]}
-            for index, chapter in enumerate(chapters, start=1)
-        ]}
+        chapters = narration_scenes(chapters)
+        board = {"scenes": [{"index": scene["index"], "text": scene["text"]} for scene in chapters]}
         voices = tts.synthesize(narration.direct(board, output), output, author_only=True)
     clips = []
     for index, (chapter, voice) in enumerate(zip(chapters, voices, strict=True), start=1):
