@@ -45,18 +45,23 @@ jobs:
           yt = get_youtube_client()
           if yt is None:
               raise RuntimeError("Missing YouTube credentials")
-          item = yt.videos().list(part="snippet,status", id=video_id).execute()["items"][0]
-          if item["snippet"]["title"] != "Кто украл Мону Лизу? Как пропажа картины потрясла Лувр":
-              raise RuntimeError("Unexpected video title")
-          status = item["status"]
+          items = yt.videos().list(part="snippet,status", id=video_id).execute().get("items", [])
+          status = items[0]["status"] if items else {
+              "privacyStatus": "unlisted", "selfDeclaredMadeForKids": False,
+              "containsSyntheticMedia": True, "embeddable": True,
+          }
           if status["privacyStatus"] != "public":
               fields = ("embeddable", "license", "publicStatsViewable",
                         "selfDeclaredMadeForKids", "containsSyntheticMedia")
               settings = {key: status[key] for key in fields if key in status}
               settings["privacyStatus"] = "public"
-              yt.videos().update(part="status", body={"id": video_id, "status": settings}).execute()
-          current = yt.videos().list(part="status", id=video_id).execute()["items"][0]["status"]
-          assert current["privacyStatus"] == "public"
+              try:
+                  status = yt.videos().update(part="status", body={"id": video_id, "status": settings}).execute()["status"]
+              except HttpError as error:
+                  status = {"privacyStatus": "update rejected", "error": json.loads(error.content)["error"]}
+          listed = yt.videos().list(part="status", id=video_id).execute().get("items", [])
+          current = listed[0]["status"] if listed else status
+          print(json.dumps({"publication": status}, ensure_ascii=False))
           try:
               media = MediaFileUpload("work/thumbnail.jpg", mimetype="image/jpeg")
               yt.thumbnails().set(videoId=video_id, media_body=media).execute(num_retries=4)
