@@ -13,6 +13,9 @@ import json
 
 import datetime as dt
 import difflib
+from email.utils import parsedate_to_datetime
+from zoneinfo import ZoneInfo
+from xml.etree import ElementTree
 import time
 from pathlib import Path
 
@@ -336,7 +339,7 @@ def _retention_hint() -> str:
         return ""
 
 
-def choose_with_gemini(cands: list[dict], used: list[dict]) -> dict:
+def choose_with_gemini(cands: list[dict], used: list[dict], *, news_only: bool = False) -> dict:
     cands = cands[:12]
     criteria = {"hook": 3, "evidence": 3, "visuals": 2, "channel_fit": 2}
     lines = []
@@ -344,6 +347,9 @@ def choose_with_gemini(cands: list[dict], used: list[dict]) -> dict:
         m = c["metrics"]
         lines.append(f"{i}. [{c['source']}] {c['title']} | скорость={m.get('velocity')} | {m}")
     used_list = "; ".join(u.get("topic", "") for u in used[-150:]) or "нет"
+    news_rule = ("Допускай только конкретное новое событие или новый документ из заголовка, "
+                 "подходящий жанру загадок. Не превращай дату публикации пересказа в дату события."
+                 if news_only else "")
     prompt = f"""Ты продюсер YouTube Shorts канала на русском языке про тайны, загадки и необъяснимые случаи.
 Ниже кандидаты из трендов (YouTube Shorts, Reddit, Google Trends) с метрикой скорости (просмотры или очки в час).
 
@@ -357,6 +363,7 @@ visuals — наличие осмысленного визуального ря�
 Не утверждай, что источник или архивный кадр проверен, если это следует только из заголовка.
 Выбери подходящую тему с максимальной взвешенной оценкой: 3*hook + 3*evidence + 2*visuals + 2*channel_fit.
 Для неподходящих тем дай eligible=false и кратко объясни причину.
+{news_rule}
 Тема должна быть безопасной для YouTube: без жестокости и подробностей убийств, без детей в «взрослом»
 контексте (браки, любовь, насилие) и без детей-жертв, без политики, без болезней и катастроф с жертвами.
 Если кандидат — не про тайну, можно взять из него загадочный факт.{_documented_hint()}{_retention_hint()}
@@ -398,6 +405,43 @@ visuals — наличие осмысленного визуального ря�
     return gemini.generate_json(prompt, temperature=0.7, validate=validate)
 
 
+def news_slot() -> dt.date | None:
+    if env("SLOT") != "18:00-19:30":
+        return None
+    slot_date = env("SLOT_DATE")
+    day = dt.date.fromisoformat(slot_date) if slot_date else dt.datetime.now(ZoneInfo("Europe/Moscow")).date()
+    return day if (day - dt.date(2026, 11, 21)).days % 2 == 0 else None
+
+
+def fresh_candidates(day: dt.date) -> list[dict]:
+    timezone = ZoneInfo("Europe/Moscow")
+    deadline = dt.datetime.combine(day, dt.time(19, 30), timezone)
+    now = dt.datetime.now(timezone)
+    cutoff = deadline - dt.timedelta(hours=48)
+    response = requests.get(
+        "https://news.google.com/rss/search",
+        params={"q": "(археологи OR архив OR загадка) (находка OR открытие OR документы) when:3d",
+                "hl": "ru", "gl": "RU", "ceid": "RU:ru"},
+        timeout=12,
+    )
+    response.raise_for_status()
+    candidates = []
+    for item in ElementTree.fromstring(response.content).findall("./channel/item"):
+        try:
+            published = parsedate_to_datetime(item.findtext("pubDate", "")).astimezone(timezone)
+        except (TypeError, ValueError, OverflowError):
+            continue
+        title = item.findtext("title", "").strip()
+        url = item.findtext("link", "").strip()
+        if not title or not url.startswith("https://news.google.com/") or not cutoff <= published <= min(now, deadline):
+            continue
+        candidates.append({"title": title, "url": url, "source": "news",
+                           "metrics": {"published_at": published.isoformat(),
+                                       "publisher": item.findtext("source", ""),
+                                       "velocity": 1}})
+    return candidates[:12]
+
+
 def scout(run_dir: Path, forced_topic: str | None = None, exclude: list[str] | None = None) -> dict:
     """exclude — темы, отклонённые в этом запуске (например, история вышла похожей на прошлую)."""
     from . import uniqueness
@@ -414,6 +458,29 @@ def scout(run_dir: Path, forced_topic: str | None = None, exclude: list[str] | N
         report.update({"chosen": choice, "candidates": []})
         save_json(run_dir / "trends_report.json", report)
         return choice
+
+    target_day = news_slot()
+    if target_day is not None:
+        report["news"] = {"slot_date": target_day.isoformat(), "status": "fallback"}
+        try:
+            news = [item for item in fresh_candidates(target_day) if not is_used(item["title"], blocked)]
+            report["news"]["candidates"] = news
+            if news and gemini.available():
+                result = choose_with_gemini(news, blocked, news_only=True)
+                candidate = news[result["index"]]
+                if not uniqueness.gemini_duplicate(result["topic"], result.get("hook", ""), used):
+                    choice = {"topic": result["topic"], "topic_en": result.get("topic_en") or result["topic"],
+                              "hook": result.get("hook", ""), "source": "news",
+                              "source_title": candidate["title"], "source_url": candidate["url"],
+                              "metrics": candidate["metrics"], "reason": result.get("reason", "")}
+                    report["news"].update(status="selected", assessments=result["assessments"])
+                    report["chosen"] = choice
+                    save_json(run_dir / "trends_report.json", report)
+                    return choice
+            report["news"]["reason"] = "нет свежей подходящей неповторяющейся темы"
+        except Exception as exc:
+            report["news"]["reason"] = type(exc).__name__
+            log.warning("Свежий инфоповод недоступен: %s", exc)
 
     items: list[dict] = []
     for name, fn in (("youtube", fetch_youtube), ("reddit", fetch_reddit), ("google_trends", fetch_google_trends)):
