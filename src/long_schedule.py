@@ -15,7 +15,7 @@ def _stable_index(key: str, size: int) -> int:
 
 
 def plan(start: dt.date, count: int) -> list[dict]:
-    """Ежедневный старт на семь дней, затем интервалы в два или три дня."""
+    """Ежедневный старт на семь дней, затем интервалы в ровно два дня."""
     if count < 1:
         raise ValueError("Нужен хотя бы один выпуск")
     result = []
@@ -24,7 +24,7 @@ def plan(start: dt.date, count: int) -> list[dict]:
     for number in range(1, count + 1):
         key = f"{start.isoformat()}|{number}"
         if number > 1:
-            interval = 1 if number <= 7 else 2 + _stable_index(f"{key}|gap", 2)
+            interval = 1 if number <= 7 else 2
             day += dt.timedelta(days=interval)
         tick = _stable_index(f"{key}|time", 19)
         if tick == previous_tick:
