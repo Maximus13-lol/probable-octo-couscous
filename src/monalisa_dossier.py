@@ -4,9 +4,8 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shutil
 from pathlib import Path
-
-import requests
 
 from . import gemini
 
@@ -40,11 +39,8 @@ def prepare(root: Path) -> Path:
     root.mkdir(parents=True, exist_ok=True)
     images = []
     for name, remote, credit in MATERIALS:
-        response = requests.get("https://upload.wikimedia.org/wikipedia/commons/" + remote,
-                                headers={"User-Agent": "Papka13ArchivePilot/1.0 (GitHub editorial pilot)"},
-                                timeout=45)
-        response.raise_for_status()
-        (root / name).write_bytes(response.content)
+        source = Path(__file__).resolve().parents[1] / "assets" / "archive-pilot" / name
+        shutil.copyfile(source, root / name)
         images.append(dict(image=name, credit=credit, license="Общественное достояние",
                            source_url="https://commons.wikimedia.org/wiki/File:" + remote.rsplit("/", 1)[1]))
     chapters = []
