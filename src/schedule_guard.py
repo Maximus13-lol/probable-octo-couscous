@@ -79,6 +79,16 @@ def filled_slots(day: dt.date, slots: list[str]) -> set[str]:
     return filled
 
 
+def filter_short_uploads(items: list[dict]) -> list[dict]:
+    """Длинные выпуски используют собственный журнал и не занимают слоты Shorts."""
+    long_ids = {
+        item.get("video_id") for path in (CONFIG_DIR.parent / "long" / "delivery").glob("*.json")
+        if isinstance(item := load_json(path, default={}), dict) and item.get("video_id")
+    }
+    return [item for item in items
+            if item.get("snippet", {}).get("resourceId", {}).get("videoId") not in long_ids]
+
+
 def uploads_today_on_channel(day: dt.date, tz: ZoneInfo) -> int | None:
     try:
         from .upload import get_youtube_client
@@ -87,16 +97,11 @@ def uploads_today_on_channel(day: dt.date, tz: ZoneInfo) -> int | None:
             return None
         ch = yt.channels().list(part="contentDetails", mine=True).execute()
         uploads = ch["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
-        # Длинные выпуски используют собственный журнал и не занимают слоты Shorts.
-        long_ids = {
-            item.get("video_id") for path in (CONFIG_DIR.parent / "long" / "delivery").glob("*.json")
-            if isinstance(item := load_json(path, default={}), dict) and item.get("video_id")
-        }
-        items = yt.playlistItems().list(part="snippet", playlistId=uploads, maxResults=20).execute().get("items", [])
+        items = filter_short_uploads(yt.playlistItems().list(part="snippet", playlistId=uploads, maxResults=20).execute().get("items", []))
         n = 0
         for it in items:
             added = it.get("snippet", {}).get("publishedAt", "")  # время добавления в загрузки = время загрузки
-            if added and it["snippet"].get("resourceId", {}).get("videoId") not in long_ids:
+            if added:
                 when = dt.datetime.fromisoformat(added.replace("Z", "+00:00")).astimezone(tz)
                 n += when.date() == day
         return n
