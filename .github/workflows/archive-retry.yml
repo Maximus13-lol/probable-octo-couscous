@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   narration:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/editorial-pilot'
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/editorial-pilot' && github.event.pull_request.head.sha == '3246bce8c13640f88d999932f1015d1c070dc607'
     runs-on: ubuntu-latest
     timeout-minutes: 180
     strategy:
