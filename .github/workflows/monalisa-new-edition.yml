@@ -15,7 +15,7 @@ jobs:
   publish:
     if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/long-video-motion'
     runs-on: ubuntu-latest
-    timeout-minutes: 100
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v5
         with:
@@ -23,7 +23,7 @@ jobs:
           persist-credentials: false
       - id: approved
         run: |
-          if [ "$(git log -1 --format=%s)" = "Render and publish the approved new Mona Lisa edition" ]; then echo "yes=true" >> "$GITHUB_OUTPUT"; fi
+          if [ "$(git log -1 --format=%s)" = "Verify and finish the existing public Mona Lisa edition" ]; then echo "yes=true" >> "$GITHUB_OUTPUT"; fi
       - uses: actions/download-artifact@v4
         if: steps.approved.outputs.yes == 'true'
         with:
@@ -31,60 +31,9 @@ jobs:
           run-id: 44950723394
           name: monalisa-full-fira
           path: work/original
-      - name: Render the archival montage while the greeting is processed
+      - name: Install YouTube dependencies
         if: steps.approved.outputs.yes == 'true'
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg
-          python -m pip install 'Pillow>=10,<12' google-api-python-client google-auth google-auth-oauthlib requests
-          mkdir -p work/monalisa-archive outputs
-          unzip -oq assets/monalisa-edition/archive-0.zip -d work/monalisa-archive
-          unzip -oq assets/monalisa-edition/archive-1.zip -d work/monalisa-archive
-          cp work/original/thumbnail.jpg outputs/monalisa-preview-fira.jpg
-          python tools/monalisa_score.py
-          ffmpeg -hide_banner -v error -nostdin -y -i work/original/monalisa.mp4 -stream_loop -1 -i work/monalisa-archive.wav -stream_loop -1 -i work/monalisa-investigation.wav -stream_loop -1 -i work/monalisa-discovery.wav -stream_loop -1 -i work/monalisa-epilogue.wav -filter_complex '[0:a]aresample=async=1:first_pts=0,adeclick=w=20:o=75:t=2[a];[1:a]atrim=duration=365,afade=t=in:d=3,afade=t=out:st=357:d=8[b1];[2:a]atrim=duration=455,afade=t=in:d=8,afade=t=out:st=447:d=8,adelay=357000:all=1[b2];[3:a]atrim=duration=467,afade=t=in:d=8,afade=t=out:st=459:d=8,adelay=804000:all=1[b3];[4:a]atrim=duration=351,afade=t=in:d=8,afade=t=out:st=342:d=9,adelay=1263000:all=1[b4];[b1][b2][b3][b4]amix=inputs=4:normalize=0,volume=-26dB[m];[a][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=false:latency=true[out]' -map 0:v:0 -map '[out]' -c:v copy -c:a aac -b:a 192k outputs/monalisa-music.mp4
-          python tools/remontage_monalisa.py
-          python - <<'PY'
-          from pathlib import Path
-          from tools.remontage_monalisa import probe
-          original = probe(Path("work/original/monalisa.mp4"))
-          revised = probe(Path("work/monalisa-new-cut/main.mp4"))
-          assert abs(original - revised) < 3, (original, revised)
-          PY
-      - name: Wait for the separately rendered author greeting
-        if: steps.approved.outputs.yes == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          for attempt in $(seq 1 78); do
-            status=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/45009671149" --jq '.status')
-            if [ "$status" = completed ]; then
-              test "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/45009671149" --jq '.conclusion')" = success
-              exit 0
-            fi
-            sleep 30
-          done
-          exit 1
-      - uses: actions/download-artifact@v4
-        if: steps.approved.outputs.yes == 'true'
-        with:
-          github-token: ${{ github.token }}
-          run-id: 45009671149
-          name: monalisa-author-opening
-          path: work/greeting
-      - name: Assemble and check the public cut
-        if: steps.approved.outputs.yes == 'true'
-        run: |
-          python tools/remontage_monalisa.py work/greeting
-          ffprobe -v error -show_entries format=duration:stream=codec_type,width,height -of json outputs/monalisa-new-format.mp4
-      - uses: actions/upload-artifact@v4
-        if: steps.approved.outputs.yes == 'true'
-        with:
-          name: monalisa-new-format
-          path: |
-            outputs/monalisa-new-format.mp4
-            outputs/monalisa-preview-fira.jpg
-            work/monalisa-archive/sources.json
+        run: python -m pip install 'Pillow>=10,<12' google-api-python-client google-auth google-auth-oauthlib requests
       - name: Publish the new edition with its cover
         if: steps.approved.outputs.yes == 'true'
         env:
@@ -97,45 +46,21 @@ jobs:
           import time
           from pathlib import Path
           from src.cover import set_thumbnail
-          from src.upload import get_youtube_client, upload
+          from src.upload import get_youtube_client
 
           yt = get_youtube_client()
           if yt is None:
               raise RuntimeError("YouTube credentials unavailable")
-          title = "Кто украл Мону Лизу? Полное расследование | Папка №13"
-          channel = yt.channels().list(part="contentDetails", mine=True).execute()["items"][0]
-          playlist = channel["contentDetails"]["relatedPlaylists"]["uploads"]
-          recent = yt.playlistItems().list(part="snippet", playlistId=playlist, maxResults=50).execute()["items"]
-          video_id = next((item["snippet"]["resourceId"]["videoId"] for item in recent
-                           if item["snippet"].get("title") == title), None)
-          if not video_id:
-              archive = json.loads(Path("work/monalisa-archive/sources.json").read_text(encoding="utf-8"))
-              credits = "\n".join(f'{x["caption"]} — {x["author"] or "Wikimedia Commons"} ({x["license"]}) {x["source"]}'
-                                  for x in archive)
-              description = (
-                  "Как исчезла Мона Лиза, что узнала пресса и как картину вернули в Лувр? "
-                  "Восстанавливаем события по архивным фотографиям и газетам.\n\n"
-                  "Лувр: https://www.louvre.fr/en/explore/the-palace/from-the-mona-lisa-to-the-wedding-feast-at-cana\n"
-                  "Библиотека Конгресса: https://guides.loc.gov/chronicling-america-theft-mona-lisa\n"
-                  "Пустое место в Лувре: https://commons.wikimedia.org/wiki/File:Mona_Lisa_stolen-1911.jpg\n\n"
-                  "Озвучка синтезирована на основе авторского голоса. Музыка создана для выпуска.\n\n"
-                  + credits
-              )
-              result = upload(Path("outputs/monalisa-new-format.mp4"), {
-                  "title": title, "description": description[:4900], "tags": ["Мона Лиза", "Лувр", "Папка №13"],
-                  "category_id": "27", "language": "ru", "made_for_kids": False, "privacy_status": "public",
-                  "contains_synthetic_media": True, "paid_promotion": False,
-              }, Path("outputs"))
-              video_id = result["video_id"]
+          video_id = "Von4dCzG3i0"
           print(f"https://www.youtube.com/watch?v={video_id}", flush=True)
-          for _ in range(42):
+          for _ in range(120):
               items = yt.videos().list(part="status", id=video_id).execute().get("items", [])
               status = items[0]["status"] if items else {}
               if status.get("uploadStatus") in {"processed", "rejected", "failed"}:
                   break
               time.sleep(10)
           assert status.get("uploadStatus") == "processed" and status.get("privacyStatus") == "public", status
-          cover = set_thumbnail(video_id, Path("outputs/monalisa-preview-fira.jpg"))
+          cover = set_thumbnail(video_id, Path("work/original/thumbnail.jpg"))
           print(json.dumps({"video_id": video_id, "visibility": "public", "thumbnail": cover}, ensure_ascii=False))
           assert cover == "ok", cover
           PY
