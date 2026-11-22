@@ -42,8 +42,15 @@ jobs:
           unzip -oq assets/monalisa-edition/archive-1.zip -d work/monalisa-archive
           cp work/original/thumbnail.jpg outputs/monalisa-preview-fira.jpg
           python tools/monalisa_score.py
-          ffmpeg -hide_banner -v error -nostdin -y -i work/original/monalisa.mp4 -stream_loop -1 -i work/monalisa-archive.wav -stream_loop -1 -i work/monalisa-investigation.wav -stream_loop -1 -i work/monalisa-discovery.wav -stream_loop -1 -i work/monalisa-epilogue.wav -filter_complex '[0:a]adeclick=w=20:o=75:t=2[a];[1:a]atrim=duration=365,afade=t=in:d=3,afade=t=out:st=357:d=8[b1];[2:a]atrim=duration=455,afade=t=in:d=8,afade=t=out:st=447:d=8,adelay=357000:all=1[b2];[3:a]atrim=duration=467,afade=t=in:d=8,afade=t=out:st=459:d=8,adelay=804000:all=1[b3];[4:a]atrim=duration=351,afade=t=in:d=8,afade=t=out:st=342:d=9,adelay=1263000:all=1[b4];[b1][b2][b3][b4]amix=inputs=4:normalize=0,volume=-26dB[m];[a][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=false:latency=true[out]' -map 0:v:0 -map '[out]' -c:v copy -c:a aac -b:a 192k outputs/monalisa-music.mp4
+          ffmpeg -hide_banner -v error -nostdin -y -i work/original/monalisa.mp4 -stream_loop -1 -i work/monalisa-archive.wav -stream_loop -1 -i work/monalisa-investigation.wav -stream_loop -1 -i work/monalisa-discovery.wav -stream_loop -1 -i work/monalisa-epilogue.wav -filter_complex '[0:a]aresample=async=1:first_pts=0,adeclick=w=20:o=75:t=2[a];[1:a]atrim=duration=365,afade=t=in:d=3,afade=t=out:st=357:d=8[b1];[2:a]atrim=duration=455,afade=t=in:d=8,afade=t=out:st=447:d=8,adelay=357000:all=1[b2];[3:a]atrim=duration=467,afade=t=in:d=8,afade=t=out:st=459:d=8,adelay=804000:all=1[b3];[4:a]atrim=duration=351,afade=t=in:d=8,afade=t=out:st=342:d=9,adelay=1263000:all=1[b4];[b1][b2][b3][b4]amix=inputs=4:normalize=0,volume=-26dB[m];[a][m]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.95:level=false:latency=true[out]' -map 0:v:0 -map '[out]' -c:v copy -c:a aac -b:a 192k outputs/monalisa-music.mp4
           python tools/remontage_monalisa.py
+          python - <<'PY'
+          from pathlib import Path
+          from tools.remontage_monalisa import probe
+          original = probe(Path("work/original/monalisa.mp4"))
+          revised = probe(Path("work/monalisa-new-cut/main.mp4"))
+          assert abs(original - revised) < 3, (original, revised)
+          PY
       - name: Wait for the separately rendered author greeting
         if: steps.approved.outputs.yes == 'true'
         env:
