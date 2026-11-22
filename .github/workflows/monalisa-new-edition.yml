@@ -1,0 +1,67 @@
+name: Publish Mona Lisa new edition
+on:
+  pull_request:
+    paths: ['.github/workflows/monalisa-new-edition.yml']
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: monalisa-public-new-edition
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/long-video-motion'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - id: approved
+        run: |
+          if [ "$(git log -1 --format=%s)" = "Verify and finish the existing public Mona Lisa edition" ]; then echo "yes=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/download-artifact@v4
+        if: steps.approved.outputs.yes == 'true'
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44950723394
+          name: monalisa-full-fira
+          path: work/original
+      - name: Install YouTube dependencies
+        if: steps.approved.outputs.yes == 'true'
+        run: python -m pip install 'Pillow>=10,<12' google-api-python-client google-auth google-auth-oauthlib requests
+      - name: Publish the new edition with its cover
+        if: steps.approved.outputs.yes == 'true'
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: |
+          python - <<'PY'
+          import json
+          import time
+          from pathlib import Path
+          from src.cover import set_thumbnail
+          from src.upload import get_youtube_client
+
+          yt = get_youtube_client()
+          if yt is None:
+              raise RuntimeError("YouTube credentials unavailable")
+          video_id = "Von4dCzG3i0"
+          print(f"https://www.youtube.com/watch?v={video_id}", flush=True)
+          for _ in range(120):
+              items = yt.videos().list(part="status", id=video_id).execute().get("items", [])
+              status = items[0]["status"] if items else {}
+              if status.get("uploadStatus") in {"processed", "rejected", "failed"}:
+                  break
+              time.sleep(10)
+          assert status.get("uploadStatus") == "processed" and status.get("privacyStatus") == "public", status
+          cover = set_thumbnail(video_id, Path("work/original/thumbnail.jpg"))
+          print(json.dumps({"video_id": video_id, "visibility": "public", "thumbnail": cover}, ensure_ascii=False))
+          assert cover == "ok", cover
+          PY
+
