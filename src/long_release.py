@@ -5,6 +5,7 @@ import argparse
 import datetime as dt
 import json
 import os
+import time
 from pathlib import Path
 
 from .long_pilot import read_dossier, render
@@ -55,7 +56,26 @@ def deliver(item: dict, output: Path) -> dict:
     }
     result = upload.upload(output / "pilot.mp4", metadata, output)
     result["url"] = f'https://www.youtube.com/watch?v={result["video_id"]}'
-    result["thumbnail"] = cover.set_thumbnail(result["video_id"], output / "thumbnail.jpg")
+    # Сохраняем ID сразу: после задержки обработки повторная загрузка создаст дубль.
+    client = upload.get_youtube_client()
+    if client is None:
+        raise RuntimeError("YouTube API недоступен после загрузки")
+    for attempt in range(31):
+        response = client.videos().list(part="status", id=result["video_id"]).execute()
+        items = response.get("items", [])
+        status = items[0]["status"] if items else {}
+        upload_status = status.get("uploadStatus")
+        if upload_status in {"processed", "failed", "rejected", "deleted"}:
+            break
+        if attempt < 30:
+            time.sleep(10)
+    result["upload_status"] = upload_status
+    result["rejection_reason"] = status.get("rejectionReason") or status.get("failureReason")
+    result["confirmed_publish_at"] = status.get("publishAt")
+    result["thumbnail"] = (
+        cover.set_thumbnail(result["video_id"], output / "thumbnail.jpg")
+        if upload_status == "processed" else "ожидает успешной обработки"
+    )
     return result
 
 
