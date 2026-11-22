@@ -8,7 +8,7 @@ OUT=WORK/"monalisa-new-cut"
 OUT.mkdir(exist_ok=True)
 SIZE=(1280,720)
 FPS=25
-FONT=WORK/"long-motion/assets/fonts/FiraSansCondensed-ExtraBold.ttf"
+FONT=ROOT/"assets/fonts/FiraSansCondensed-ExtraBold.ttf"
 MEDIA=WORK/"monalisa-archive"
 ARCHIVE={x["id"]:x for x in json.loads((MEDIA/"sources.json").read_text(encoding="utf-8"))}
 ARCHIVE[0]={"image":str(ROOT/"assets/archive-pilot/wall.jpg"),"caption":"Пустое место в Квадратном салоне, тысяча девятьсот одиннадцатый год",
