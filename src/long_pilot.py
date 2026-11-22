@@ -141,6 +141,38 @@ def resolve_illustrations(scenes: list[dict], output: Path) -> None:
                      license="Визуальная реконструкция", source_url="https://pollinations.ai/")
 
 
+SECTION_ORDER = ("context", "event", "investigation", "outcome")
+
+
+def validate_editorial(dossier: dict, *, require_sections: bool = False) -> None:
+    chapters = dossier["chapters"]
+    sections = [chapter.get("section") for chapter in chapters]
+    if require_sections or any(section is not None for section in sections):
+        if any(section not in SECTION_ORDER for section in sections):
+            raise ValueError("Укажите section для каждой главы: context, event, investigation или outcome")
+        distinct = list(dict.fromkeys(sections))
+        ranks = [SECTION_ORDER.index(section) for section in sections]
+        if tuple(distinct) != SECTION_ORDER or ranks != sorted(ranks):
+            raise ValueError("Главы должны идти по порядку: контекст → событие → расследование → итог")
+    texts = [("приветствие", dossier["opening"])] if dossier.get("opening") else []
+    texts.extend((f"глава {index}", chapter["text"]) for index, chapter in enumerate(chapters, 1))
+    seen = {}
+    for label, text in texts:
+        words = re.findall(r"[\w]+", text.casefold().replace("ё", "е"))
+        if len(words) < 5:
+            continue
+        width = min(12, len(words))
+        for index in range(len(words) - width + 1):
+            excerpt = tuple(words[index:index + width])
+            previous = seen.get(excerpt)
+            if previous is not None:
+                previous_label, previous_index = previous
+                if previous_label != label or index - previous_index >= width:
+                    raise ValueError(f"Повтор между фрагментами «{previous_label}» и «{label}»: {' '.join(excerpt)}")
+            else:
+                seen[excerpt] = (label, index)
+
+
 def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
     output = output.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -152,6 +184,7 @@ def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
         ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:duration=1", str(audio))
         voices = [{"path": str(audio)} for chapter in chapters]
     else:
+        validate_editorial(dossier)
         from . import narration, tts
 
         opening = dossier.get("opening") or (
@@ -163,13 +196,7 @@ def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
         board = {"scenes": [{"index": scene["index"], "text": scene["text"]} for scene in chapters]}
         voices = tts.synthesize(narration.direct(board, output), output, author_only=True)
     intro = render_intro(output)
-    clips = []
-    if intro:
-        teaser = output / "opening-card.mp4"
-        ffmpeg("-loop", "1", "-framerate", "25", "-i", str(output / "thumbnail.jpg"),
-               "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "1.4",
-               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(teaser))
-        clips.extend([teaser.name, intro.name])
+    clips = [intro.name] if intro else []
     for index, (chapter, voice) in enumerate(zip(chapters, voices, strict=True), start=1):
         frame = output / f"frame-{index:03d}.png"
         clip = output / f"clip-{index:03d}.mp4"
