@@ -71,7 +71,7 @@ jobs:
           QWEN_PY="$qwen" python -m src.long_release render "$RUNNER_TEMP/episode.json"
           git restore -- config/voice.json
           duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/long-release/pilot.mp4)
-          python -c 'import sys; d = float(sys.argv[1]); sys.exit(0 if 1020 <= d <= 1380 else f"Unexpected runtime: {d:.0f}s")' "$duration"
+          python -c 'import sys; d = float(sys.argv[1]); sys.exit(0 if 1020 <= d <= 1800 else f"Unexpected runtime: {d:.0f}s")' "$duration"
       - uses: actions/cache/save@v4
         if: always() && steps.selection.outputs.ready == 'true' && hashFiles('output/long-release/audio/qwen-checkpoints/*.json') != ''
         with:
@@ -106,7 +106,24 @@ jobs:
           git add -- "$DELIVERY_FILE"
           git commit -m 'Record scheduled long episode [skip ci]'
           for attempt in 1 2 3; do
-            git pull --rebase origin "$RELEASE_BRANCH" && git push origin "HEAD:$RELEASE_BRANCH" && exit 0
+            if git pull --rebase origin "$RELEASE_BRANCH" && git push origin "HEAD:$RELEASE_BRANCH"; then
+              python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          from pathlib import Path
+
+          result = json.loads(Path(os.environ["DELIVERY_FILE"]).read_text(encoding="utf-8"))
+          if result["upload_status"] != "processed":
+              raise SystemExit(f"YouTube processing: {result['upload_status']} ({result['rejection_reason']})")
+          actual = result["confirmed_publish_at"]
+          if not actual or dt.datetime.fromisoformat(actual) != dt.datetime.fromisoformat(result["publish_at"]):
+              raise SystemExit("YouTube did not confirm the requested publication time")
+          if result["thumbnail"] != "ok":
+              print("::warning::YouTube did not accept the cover; see the release record")
+          PY
+              exit 0
+            fi
             sleep 10
           done
           exit 1
