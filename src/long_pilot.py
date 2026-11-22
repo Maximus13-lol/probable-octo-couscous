@@ -119,8 +119,9 @@ def render_intro(output: Path) -> Path | None:
     clip = output / "intro.mp4"
     ffmpeg("-i", str(source), "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
            "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=25",
-           "-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-shortest", str(clip))
+           "-filter_complex", "[0:a:0]volume=0.8,aresample=48000,apad[a]",
+           "-map", "0:v:0", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(clip))
     return clip
 
 
@@ -162,7 +163,13 @@ def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
         board = {"scenes": [{"index": scene["index"], "text": scene["text"]} for scene in chapters]}
         voices = tts.synthesize(narration.direct(board, output), output, author_only=True)
     intro = render_intro(output)
-    clips = [intro.name] if intro else []
+    clips = []
+    if intro:
+        teaser = output / "opening-card.mp4"
+        ffmpeg("-loop", "1", "-framerate", "25", "-i", str(output / "thumbnail.jpg"),
+               "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "1.4",
+               "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(teaser))
+        clips.extend([teaser.name, intro.name])
     for index, (chapter, voice) in enumerate(zip(chapters, voices, strict=True), start=1):
         frame = output / f"frame-{index:03d}.png"
         clip = output / f"clip-{index:03d}.mp4"
