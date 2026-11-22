@@ -10,7 +10,10 @@ SIZE=(1280,720)
 FPS=25
 FONT=ROOT/"assets/fonts/FiraSansCondensed-ExtraBold.ttf"
 MEDIA=WORK/"monalisa-archive"
-ARCHIVE={x["id"]:x for x in json.loads((MEDIA/"sources.json").read_text(encoding="utf-8"))}
+ARCHIVE = {
+    item["id"]: {**item, "image": str(MEDIA / f'archive-{item["id"]:02d}.jpg')}
+    for item in json.loads((MEDIA / "sources.json").read_text(encoding="utf-8"))
+}
 ARCHIVE[0]={"image":str(ROOT/"assets/archive-pilot/wall.jpg"),"caption":"Пустое место в Квадратном салоне, тысяча девятьсот одиннадцатый год",
             "source":"https://commons.wikimedia.org/wiki/File:Mona_Lisa_stolen-1911.jpg",
             "license":"Public domain","author":"Неизвестный автор"}
