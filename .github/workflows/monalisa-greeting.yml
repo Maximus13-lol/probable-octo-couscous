@@ -1,0 +1,57 @@
+name: Mona Lisa author greeting
+on:
+  pull_request:
+    paths: ['.github/workflows/monalisa-greeting.yml']
+permissions:
+  contents: read
+jobs:
+  voice:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/long-video-motion'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - id: gate
+        run: |
+          if [ "$(git log -1 --format=%s)" = "Record the Mona Lisa opening with the author voice" ]; then echo "run=true" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/setup-python@v6
+        if: steps.gate.outputs.run == 'true'
+        with:
+          python-version: '3.11'
+      - name: Generate author narration for the opening
+        if: steps.gate.outputs.run == 'true'
+        env:
+          VOICE_KEY: ${{ secrets.VOICE_KEY }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          python -m pip install -r requirements.txt
+          python -m venv "$RUNNER_TEMP/qwen"
+          "$RUNNER_TEMP/qwen/bin/pip" install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+          "$RUNNER_TEMP/qwen/bin/pip" install qwen-tts==0.1.1 faster-whisper
+          test -n "$VOICE_KEY"
+          trap 'rm -f assets/voice/ref.flac' EXIT
+          gpg --batch --quiet --pinentry-mode loopback --passphrase "$VOICE_KEY" -o assets/voice/ref.flac -d assets/voice/ref.flac.gpg
+          unset VOICE_KEY
+          QWEN_PY="$RUNNER_TEMP/qwen/bin/python" python - <<'PY'
+          from pathlib import Path
+          from src import tts
+          from src.utils import setup_logging
+          setup_logging()
+          segments = [
+              "Картина исчезла из Лувра. Больше двух лет на её месте зияла пустота.",
+              "Привет! Это «Папка номер тринадцать». Сегодня разберём, как исчезла Мона Лиза, почему её пропажу заметили не сразу и что выдало человека, у которого её нашли.",
+          ]
+          report = tts.synthesize([{"index": i, "display_text": text} for i, text in enumerate(segments, 1)],
+                                  Path("work/monalisa-open"), author_only=True)
+          assert all(part["voice"] == "qwen:author" for part in report)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.run == 'true'
+        with:
+          name: monalisa-author-opening
+          path: work/monalisa-open/audio/scene_*.wav
+          if-no-files-found: error
