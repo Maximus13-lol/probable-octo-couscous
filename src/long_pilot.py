@@ -11,7 +11,6 @@ from urllib.parse import urlsplit
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
-from .long_motion import intro_frames
 from .long_preview import SIZE, make_preview
 from .utils import find_font
 
@@ -113,14 +112,15 @@ def narration_scenes(chapters: list[dict]) -> list[dict]:
     return scenes
 
 
-def render_intro(output: Path) -> Path:
-    frames = output / "intro-frames"
-    frames.mkdir(parents=True, exist_ok=True)
-    intro_frames(frames)
+def render_intro(output: Path) -> Path | None:
+    source = Path(__file__).resolve().parents[1] / "assets" / "long-intro.mp4"
+    if not source.is_file():
+        return None
     clip = output / "intro.mp4"
-    ffmpeg("-framerate", "25", "-i", str(frames / "intro-%03d.png"),
-           "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
-           "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(clip))
+    ffmpeg("-i", str(source), "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+           "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=25",
+           "-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-c:a", "aac", "-shortest", str(clip))
     return clip
 
 
@@ -161,7 +161,8 @@ def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
         resolve_illustrations(chapters, output)
         board = {"scenes": [{"index": scene["index"], "text": scene["text"]} for scene in chapters]}
         voices = tts.synthesize(narration.direct(board, output), output, author_only=True)
-    clips = [render_intro(output).name]
+    intro = render_intro(output)
+    clips = [intro.name] if intro else []
     for index, (chapter, voice) in enumerate(zip(chapters, voices, strict=True), start=1):
         frame = output / f"frame-{index:03d}.png"
         clip = output / f"clip-{index:03d}.mp4"
