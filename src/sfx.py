@@ -117,11 +117,7 @@ def build(run_dir: Path, scene_starts: list[float], total: float, last_scene_sta
     if not cfg["enabled"]:
         return {"events": [], "ambient": None}
     d = run_dir / "sfx"
-    wh, im = whoosh(d / "whoosh.wav"), impact(d / "impact.wav")
-    events = [(str(im), 0.0, cfg["impact_volume"])]
-    for t0 in scene_starts[1:]:
-        events.append((str(wh), max(0.0, t0 - 0.35), cfg["whoosh_volume"]))
-    if last_scene_start:
-        events.append((str(im), max(0.0, last_scene_start - 0.1), cfg["impact_volume"] * 0.8))
+    opening = impact(d / "impact.wav")
+    events = [(str(opening), 0.0, cfg["impact_volume"])]
     amb = str(ambient(d / "ambient.wav", total)) if cfg["ambient"] else None
     return {"events": events, "ambient": amb, "ambient_volume": cfg["ambient_volume"]}

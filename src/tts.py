@@ -552,19 +552,26 @@ def qwen_available() -> bool:
     return bool(py and Path(py).exists() and (ROOT_DIR / _qwen_cfg()["ref_audio"]).exists())
 
 
-def _synth_qwen(narr: list[dict], adir: Path) -> list[dict]:
+def _synth_qwen(narr: list[dict], adir: Path, *, checkpoint: bool = False) -> list[dict]:
     cfg = _qwen_cfg()
     caps = cfg.get("stress_caps", True)
     items = [{"id": f"s{sc['index']}", "text": (sc.get("qwen_text") if caps else None) or sc["display_text"],
               "out": str(adir / f"q_{sc['index']:02d}.wav")} for sc in narr]
     from . import cta as cta_mod
     cta_cfg = cta_mod.config()
-    if cta_cfg.get("enabled") and cta_cfg.get("voice_text"):
+    if not checkpoint and cta_cfg.get("enabled") and cta_cfg.get("voice_text"):
         items.append({"id": "cta", "text": cta_cfg["voice_text"], "out": str(adir / "cta_qwen.wav")})
     job = {"model": cfg["model"], "ref_audio": str(ROOT_DIR / cfg["ref_audio"]), "ref_text": cfg["ref_text"],
            "language": cfg["language"], "min_recall": cfg["min_recall"],
            "budget_sec": float(cfg.get("budget_min", 30)) * 60,
            "whisper_dir": str(ROOT_DIR / ".cache" / "whisper"), "items": items}
+    if checkpoint:
+        import hashlib
+
+        checkpoint_dir = adir / "qwen-checkpoints"
+        checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        job["checkpoint_dir"] = str(checkpoint_dir)
+        job["ref_sha"] = hashlib.sha256(Path(job["ref_audio"]).read_bytes()).hexdigest()
     job_path = adir / "qwen_job.json"
     save_json(job_path, job)
     log.info("Озвучка голосом автора (Qwen3-TTS): %d фраз", len(items))
@@ -589,7 +596,8 @@ def _synth_qwen(narr: list[dict], adir: Path) -> list[dict]:
             raise RuntimeError("Qwen3-TTS не уложился во время")
     if proc.wait() != 0 or any(f"s{sc['index']}" not in done for sc in narr):
         raise RuntimeError(f"Qwen3-TTS завершился с ошибкой (код {proc.returncode})")
-    bad = [k for k, v in done.items() if k != "cta" and v["recall"] < 0.6]
+    bad = [k for k, v in done.items()
+           if k != "cta" and (not v["ok"] if checkpoint else v["recall"] < 0.6)]
     if bad:
         raise RuntimeError(f"Qwen3-TTS: фразы {bad} озвучены неразборчиво — откат на запасной голос")
     result = []
@@ -639,10 +647,12 @@ def providers() -> list[str]:
     return [p for p in order if ok[p]]
 
 
-def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False) -> list[dict]:
+def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False, *, author_only: bool = False) -> list[dict]:
     adir = run_dir / "audio"
     adir.mkdir(parents=True, exist_ok=True)
-    provs = providers()
+    if author_only and not qwen_available():
+        raise TtsFatal("Недоступна озвучка голосом автора")
+    provs = ["qwen"] if author_only else providers()
     if not provs:
         if not allow_silent:
             raise TtsFatal("Нет ключей озвучки: задайте GEMINI_API_KEY (Gemini TTS) или AZURE_SPEECH_KEY/REGION")
@@ -655,7 +665,7 @@ def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False) -> l
         try:
             log.info("Озвучка: %s", prov)
             fn = {"gemini": _synth_gemini, "azure": _synth_azure, "vosk": _synth_vosk, "qwen": _synth_qwen}[prov]
-            result = fn(narr, adir)
+            result = fn(narr, adir, checkpoint=True) if author_only else fn(narr, adir)
             save_json(run_dir / "tts.json", result)
             return result
         except Exception as exc:  # noqa: BLE001

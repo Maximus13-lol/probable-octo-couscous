@@ -158,15 +158,6 @@ def run(args) -> int:
 
         t = step(7, "субтитры + сборка (MoviePy)")
         video = assemble.assemble(board, imgs, voice, run_dir, cta_audio=cta_audio, brand=quality.overlays(st))
-        cover_path = None
-        if quality.on("cover"):
-            try:
-                first_photo = min((p["scene"] for p in (load_json(run_dir / "archive_photos.json", default=[]) or [])),
-                                  default=None)
-                label = (f"ДЕЛО №{st['case']}" if st.get("case") else "") or (st.get("rubric") or "")
-                cover_path = cover.make_cover(st["title"], imgs, run_dir, label, first_photo)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("Обложка не сделана: %s", exc)
         done("assembly", t)
 
         t = step(8, "ad-inserter")
@@ -180,6 +171,15 @@ def run(args) -> int:
         asm = load_json(run_dir / "assembly.json", default={}) or {}
         meta = upload.build_metadata(st, ad_info, asm.get("music_credit"))
         save_json(run_dir / "metadata.json", meta)
+        cover_path = None
+        if quality.on("cover"):
+            try:
+                first_photo = min((p["scene"] for p in (load_json(run_dir / "archive_photos.json", default=[]) or [])),
+                                  default=None)
+                label = (f"ДЕЛО №{st['case']}" if st.get("case") else "") or (st.get("rubric") or "")
+                cover_path = cover.make_cover(meta["title"], imgs, run_dir, label, first_photo)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Обложка не сделана: %s", exc)
         summary["voice"] = voice[0]["voice"] if voice else None
         summary.update({"rubric": st.get("rubric"), "sources": st.get("sources"), "topic": choice["topic"], "title": meta["title"], "video": str(final),
                         "duration": asm.get("duration"), "ad": ad_info and ad_info["campaign"]})
@@ -192,7 +192,7 @@ def run(args) -> int:
             res = upload.upload(final, meta, run_dir)
             summary["upload"] = res
             if cover_path:
-                summary["thumbnail"] = cover.set_thumbnail(res["video_id"], cover_path)
+                summary["thumbnail"] = cover.set_thumbnail(res["video_id"], cover_path, wait_for_short=True)
             upload.append_publish_log({
                 "date": dt.date.today().isoformat(), "run_id": run_id, "video_id": res["video_id"],
                 "url": res["url"], "title": meta["title"], "topic": choice["topic"],

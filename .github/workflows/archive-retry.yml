@@ -1,0 +1,164 @@
+name: Mona Lisa archive retry (no upload)
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/archive-retry.yml'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  narration:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'feat/editorial-pilot' && github.event.pull_request.head.sha == '3246bce8c13640f88d999932f1015d1c070dc607'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    env:
+      PART: ${{ matrix.part }}
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Check for an already rendered section
+        id: saved
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          until [ "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/44944899089" --jq '.status')" = "completed" ]; do
+            sleep 30
+          done
+          if gh api "repos/$GITHUB_REPOSITORY/actions/runs/44944899089/artifacts?name=monalisa-part-$PART" --jq '.artifacts[] | select(.expired == false) | .id' | grep -q '[0-9]'; then
+            echo 'found=true' >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/download-artifact@v4
+        if: steps.saved.outputs.found == 'true'
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44944899089
+          name: monalisa-part-${{ matrix.part }}
+          path: output/part
+      - uses: actions/setup-python@v6
+        if: steps.saved.outputs.found != 'true'
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        if: steps.saved.outputs.found != 'true'
+        with:
+          github-token: ${{ github.token }}
+          run-id: 44904923677
+          name: archive-pilot-13
+          path: work/previous
+      - name: Select a contiguous section of the approved dossier
+        if: steps.saved.outputs.found != 'true'
+        run: |
+          mkdir -p work/part
+          cp assets/archive-pilot/*.jpg work/part/
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          source = Path("work/previous/archive-dossier/dossier.json")
+          dossier = json.loads(source.read_text(encoding="utf-8"))
+          chapters = dossier["chapters"]
+          part = int(os.environ["PART"])
+          dossier["chapters"] = chapters[len(chapters)*part//12:len(chapters)*(part+1)//12]
+          assert dossier["chapters"]
+          Path("work/part/dossier.json").write_text(json.dumps(dossier, ensure_ascii=False), encoding="utf-8")
+          PY
+      - name: Install author-voice dependencies
+        if: steps.saved.outputs.found != 'true'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg fonts-dejavu-core
+          python -m pip install -r requirements.txt
+          python -m venv "$RUNNER_TEMP/qwen"
+          "$RUNNER_TEMP/qwen/bin/pip" install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
+          "$RUNNER_TEMP/qwen/bin/pip" install qwen-tts==0.1.1 faster-whisper
+      - name: Render with the configured author voice
+        if: steps.saved.outputs.found != 'true'
+        env:
+          VOICE_KEY: ${{ secrets.VOICE_KEY }}
+        run: |
+          test -n "$VOICE_KEY"
+          trap 'rm -f assets/voice/ref.flac' EXIT
+          gpg --batch --quiet --pinentry-mode loopback --passphrase "$VOICE_KEY" -o assets/voice/ref.flac -d assets/voice/ref.flac.gpg
+          unset VOICE_KEY
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          path = Path("config/voice.json")
+          config = json.loads(path.read_text(encoding="utf-8"))
+          config["qwen"]["timeout_min"] = 125
+          config["qwen"]["budget_min"] = 14
+          path.write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
+          PY
+          QWEN_PY="$RUNNER_TEMP/qwen/bin/python" python - <<'PY'
+          import json, os
+          from pathlib import Path
+          from src.long_pilot import read_dossier, render
+          from src.utils import setup_logging
+          setup_logging()
+          output = Path("output/part")
+          name = f'part-{int(os.environ["PART"]):02d}'
+          render(read_dossier(Path("work/part/dossier.json")), output).rename(output / (name + ".mp4"))
+          scenes = json.loads((output / "tts.json").read_text(encoding="utf-8"))
+          assert scenes and all(scene["voice"] == "qwen:author" for scene in scenes)
+          (output / (name + ".json")).write_text(json.dumps({
+              "voice": "qwen:author", "scenes": len(scenes),
+              "min_alignment": min(scene["alignment"] for scene in scenes),
+          }), encoding="utf-8")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monalisa-part-${{ matrix.part }}
+          path: |
+            output/part/part-*.mp4
+            output/part/part-*.json
+          if-no-files-found: error
+          retention-days: 7
+
+  assemble:
+    needs: narration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: monalisa-part-*
+          merge-multiple: true
+          path: output/parts
+      - name: Assemble and verify the full episode
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          python -m pip install "Pillow>=10,<12"
+          mkdir -p output/final
+          python -m src.long_preview assets/archive-pilot/wall.jpg 'Кто украл Мону Лизу?' output/final/thumbnail.jpg --subject assets/archive-pilot/portrait.jpg
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          root = Path("output/parts")
+          names = [f"part-{i:02d}" for i in range(12)]
+          assert all((root / f"{n}.mp4").is_file() for n in names)
+          reports = [json.loads((root / f"{n}.json").read_text()) for n in names]
+          assert all(r["voice"] == "qwen:author" for r in reports)
+          (root / "concat.txt").write_text("".join(f"file '{n}.mp4'\n" for n in names))
+          Path("output/final/voice.json").write_text(json.dumps(reports, indent=2))
+          PY
+          ffmpeg -v error -f concat -safe 1 -i output/parts/concat.txt -c copy -movflags +faststart output/final/monalisa.mp4
+          ffprobe -v error -show_entries format=duration:stream=codec_type,codec_name,width,height -of json output/final/monalisa.mp4 | tee output/final/media.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: monalisa-full-fira
+          path: output/final/
+          if-no-files-found: error
+          retention-days: 14

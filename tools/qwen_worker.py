@@ -10,7 +10,9 @@ job.json: {"model", "ref_audio", "ref_text", "language", "min_recall", "items": 
 """
 from __future__ import annotations
 
+import hashlib
 import json
+from pathlib import Path
 import re
 import sys
 import time
@@ -113,15 +115,31 @@ def main() -> None:
     min_recall = float(job.get("min_recall", 0.85))
     budget = float(job.get("budget_sec", 1800))  # после этого — без повторных попыток, лучший из готовых
     t_start = time.time()
-    for it in job["items"]:
+    checkpoint_dir = job.get("checkpoint_dir")
+    pending = [(item, 0) for item in job["items"]]
+    for it, round_no in pending:
         text = it["text"]
+        if checkpoint_dir:
+            signature = json.dumps([job["model"], job["ref_sha"], job.get("ref_text"), job.get("language"),
+                                    min_recall, text], ensure_ascii=False)
+            key = hashlib.sha256(signature.encode()).hexdigest()
+            checkpoint = Path(checkpoint_dir) / f"{key}.json"
+            cached_audio = checkpoint.with_suffix(".wav")
+            if checkpoint.is_file() and cached_audio.is_file():
+                import shutil
+                saved = json.loads(checkpoint.read_text(encoding="utf-8"))
+                shutil.copyfile(cached_audio, it["out"])
+                print(json.dumps({**saved, "id": it["id"], "out": it["out"], "cached": True}), flush=True)
+                continue
         best = None
         attempts = 0
         for mode, seed in (("icl", 1), ("icl", 7), ("icl", 23), ("xvec", 1), ("xvec", 7)):
-            if best is not None and time.time() - t_start > budget and best[0] >= min_recall - 0.1:
+            if checkpoint_dir and attempts >= (1 if round_no == 0 else 3):
+                break
+            if not checkpoint_dir and best is not None and time.time() - t_start > budget and best[0] >= min_recall - 0.1:
                 break  # время озвучки вышло — берём лучший разборчивый вариант
             attempts += 1
-            torch.manual_seed(seed)
+            torch.manual_seed(seed + round_no * 100)
             wavs, sr = model.generate_voice_clone(text=text, language=job.get("language", "Russian"),
                                                   voice_clone_prompt=prompt(mode),
                                                   max_new_tokens=int(len(text) * 1.6) + 40)
@@ -140,11 +158,21 @@ def main() -> None:
             if rec >= min_recall and head_ok and 7 <= cps <= 24 and not issues:
                 break
         score, w, sr, mode, rec, heard, issues = best
-        sf.write(it["out"], w, sr)
-        print(json.dumps({"id": it["id"], "out": it["out"], "recall": round(rec, 3), "mode": mode,
-                          "attempts": attempts, "ok": score >= min_recall and not issues, "issues": issues,
-                          "heard": heard[:200]},
-                         ensure_ascii=False), flush=True)
+        accepted = score >= min_recall and not issues
+        report = {"id": it["id"], "out": it["out"], "recall": round(rec, 3), "mode": mode,
+                  "attempts": attempts, "ok": accepted, "issues": issues, "heard": heard[:200]}
+        if checkpoint_dir:
+            if accepted:
+                sf.write(cached_audio, w, sr)
+                temporary = checkpoint.with_suffix(".tmp")
+                temporary.write_text(json.dumps(report, ensure_ascii=False), encoding="utf-8")
+                temporary.replace(checkpoint)
+            elif round_no == 0:
+                pending.append((it, 1))
+                continue
+        if accepted or not checkpoint_dir:
+            sf.write(it["out"], w, sr)
+        print(json.dumps(report, ensure_ascii=False), flush=True)
 
 
 if __name__ == "__main__":

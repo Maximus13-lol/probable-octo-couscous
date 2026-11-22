@@ -79,9 +79,18 @@ def filled_slots(day: dt.date, slots: list[str]) -> set[str]:
     return filled
 
 
+def long_video_ids() -> set[str]:
+    """Длинные выпуски используют собственный журнал и не занимают слоты Shorts."""
+    return {
+        item.get("video_id") for path in (CONFIG_DIR.parent / "long" / "delivery").glob("*.json")
+        if isinstance(item := load_json(path, default={}), dict) and item.get("video_id")
+    }
+
+
 def uploads_today_on_channel(day: dt.date, tz: ZoneInfo) -> int | None:
     try:
         from .upload import get_youtube_client
+        excluded = long_video_ids()
         yt = get_youtube_client()
         if yt is None:
             return None
@@ -93,7 +102,8 @@ def uploads_today_on_channel(day: dt.date, tz: ZoneInfo) -> int | None:
             added = it.get("snippet", {}).get("publishedAt", "")  # время добавления в загрузки = время загрузки
             if added:
                 when = dt.datetime.fromisoformat(added.replace("Z", "+00:00")).astimezone(tz)
-                n += when.date() == day
+                video_id = it["snippet"].get("resourceId", {}).get("videoId")
+                n += when.date() == day and video_id not in excluded
         return n
     except Exception as exc:  # noqa: BLE001
         log.warning("Не удалось посчитать загрузки на канале (%s) — только по журналу", exc)

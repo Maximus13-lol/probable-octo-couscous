@@ -204,6 +204,7 @@ jobs:
             output/*/*.json
             output/*/subtitles.srt
             output/*/narration/*
+            output/*/cover.jpg
             output/*/ad_preview.jpg
             output/*/images/*.jpg
           if-no-files-found: warn

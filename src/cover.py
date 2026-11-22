@@ -1,13 +1,9 @@
-"""Обложка ролика (заставка в списке видео канала): лучший кадр + крупное название шрифтом субтитров.
-
-YouTube принимает свою обложку через API (thumbnails.set), только если канал подтверждён по телефону.
-Для Shorts в ленте YouTube всё равно показывает кадр из ролика; своя обложка видна на странице канала
-и в поиске там, где YouTube её поддерживает. Если установить нельзя — просто пропуск, ролик не страдает.
-"""
+"""Вертикальная обложка Shorts из итогового названия и кадра ролика."""
 from __future__ import annotations
 
 import re
 import textwrap
+import time
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageEnhance, ImageFont, ImageOps
@@ -21,9 +17,9 @@ def _font(size: int) -> ImageFont.FreeTypeFont:
     return ImageFont.truetype(find_font(), size)
 
 
-def _lines(title: str, width: int = 13) -> list[str]:
+def _lines(title: str) -> list[str]:
     title = re.sub(r"\s*#\w+", "", title).strip().rstrip(".").upper()
-    return textwrap.wrap(title, width=width)[:4] or [title]
+    return textwrap.wrap(title, width=min(28, max(12, (len(title) + 2) // 3))) or ["ПАПКА №13"]
 
 
 def make_cover(title: str, images: list[Path], run_dir: Path, rubric: str = "",
@@ -40,6 +36,9 @@ def make_cover(title: str, images: list[Path], run_dir: Path, rubric: str = "",
     lines = _lines(title)
     size = 128 if max(len(x) for x in lines) <= 11 else 108
     f = _font(size)
+    while max(d.textlength(line, font=f) for line in lines) > VIDEO_W - 144 and size > 36:
+        size -= 2
+        f = _font(size)
     step = int(size * 1.12)
     y0 = 860 - step * len(lines) // 2
     for i, line in enumerate(lines):
@@ -57,7 +56,7 @@ def make_cover(title: str, images: list[Path], run_dir: Path, rubric: str = "",
     return out
 
 
-def set_thumbnail(video_id: str, cover: Path) -> str:
+def set_thumbnail(video_id: str, cover: Path, *, wait_for_short: bool = False) -> str:
     """Пробует поставить обложку через API. Возвращает «ok» или причину отказа (без исключений)."""
     try:
         from googleapiclient.http import MediaFileUpload
@@ -66,6 +65,20 @@ def set_thumbnail(video_id: str, cover: Path) -> str:
         yt = get_youtube_client()
         if yt is None:
             return "нет ключей YouTube"
+        if wait_for_short:
+            for attempt in range(13):
+                response = yt.videos().list(part="processingDetails,status", id=video_id).execute()
+                items = response.get("items", [])
+                details = items[0].get("processingDetails", {}) if items else {}
+                processing = details.get("processingStatus")
+                if processing == "succeeded":
+                    break
+                if processing in {"failed", "terminated"}:
+                    raise RuntimeError(f"YouTube завершил обработку Shorts со статусом {processing}")
+                if attempt < 12:
+                    time.sleep(5)
+            else:
+                raise RuntimeError("YouTube ещё обрабатывает Shorts, обложка сохранена в cover.jpg")
         yt.thumbnails().set(videoId=video_id, media_body=MediaFileUpload(str(cover), mimetype="image/jpeg")).execute()
         log.info("Обложка установлена для %s", video_id)
         return "ok"
