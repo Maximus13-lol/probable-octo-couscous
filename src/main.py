@@ -148,12 +148,18 @@ def run(args) -> int:
         done("images", t)
 
         t = step(6, "озвучка (Vosk / Gemini TTS / Azure)")
+        author_required = not args.no_upload and not args.test_ad
         voice = (human_voice.voice_from_recording(rec, narr, run_dir) if rec
-                 else tts.synthesize(narr, run_dir, allow_silent=args.no_upload))
+                 else tts.synthesize(narr, run_dir, allow_silent=args.no_upload, author_only=author_required))
         cta_cfg = cta.config()
         cta_audio = None
         if cta_cfg.get("enabled"):  # сначала ваша живая запись (assets/cta/voice), иначе голос Vosk
-            cta_audio = tts.pick_cta_recording(run_dir, voice) or tts.synth_cta(cta_cfg["voice_text"], run_dir, voice)
+            cta_audio = tts.pick_cta_recording(run_dir, voice)
+            if not cta_audio:
+                if author_required:
+                    cta_audio = tts.qwen_cta(run_dir)
+                else:
+                    cta_audio = tts.synth_cta(cta_cfg["voice_text"], run_dir, voice)
         done("tts", t)
 
         t = step(7, "субтитры + сборка (MoviePy)")
