@@ -8,7 +8,7 @@ import os
 import time
 from pathlib import Path
 
-from .long_pilot import archive_count, read_dossier, render
+from .long_pilot import archive_count, read_dossier, render, validate_editorial
 from .long_schedule import plan
 
 
@@ -91,6 +91,7 @@ def main() -> None:
     item = json.loads(args.item.read_text(encoding="utf-8"))
     if args.mode == "render":
         dossier = read_dossier(Path(item["dossier"]))
+        validate_editorial(dossier, require_sections=True)
         count = archive_count(dossier)
         if count < 15:
             raise ValueError(f"Для длинного выпуска нужно 15–20 архивных кадров, найдено {count}")
