@@ -52,6 +52,7 @@ jobs:
         if: steps.selection.outputs.ready == 'true'
         env:
           VOICE_KEY: ${{ secrets.VOICE_KEY }}
+          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg fonts-dejavu-core
@@ -141,3 +142,4 @@ jobs:
             output/long-release/delivery.json
             output/long-release/upload_result.json
           if-no-files-found: ignore
+

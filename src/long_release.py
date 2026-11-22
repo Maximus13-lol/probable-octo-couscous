@@ -8,7 +8,7 @@ import os
 import time
 from pathlib import Path
 
-from .long_pilot import read_dossier, render
+from .long_pilot import archive_count, read_dossier, render
 from .long_schedule import plan
 
 
@@ -90,7 +90,18 @@ def main() -> None:
         return
     item = json.loads(args.item.read_text(encoding="utf-8"))
     if args.mode == "render":
-        render(read_dossier(Path(item["dossier"])), args.output)
+        dossier = read_dossier(Path(item["dossier"]))
+        count = archive_count(dossier)
+        if count < 15:
+            raise ValueError(f"Для длинного выпуска нужно 15–20 архивных кадров, найдено {count}")
+        for chapter in dossier["chapters"]:
+            visuals = chapter.setdefault("visuals", [])
+            if not any("prompt" in visual for visual in visuals):
+                visuals.append({"prompt": (
+                    f"Illustrate this section of a Russian historical documentary about {dossier['title']}: "
+                    + chapter["text"][:450]
+                )})
+        render(dossier, args.output)
     else:
         result = deliver(item, args.output)
         (args.output / "delivery.json").write_text(json.dumps(result), encoding="utf-8")
@@ -98,3 +109,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
