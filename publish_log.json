@@ -667,5 +667,25 @@
     "manual": false,
     "publish_at": null,
     "slot_date": "2026-11-22"
+  },
+  {
+    "date": "2026-11-23",
+    "run_id": "20261123_132312",
+    "video_id": "FYFRzBsAWCk",
+    "url": "https://youtube.com/shorts/FYFRzBsAWCk",
+    "title": "Правда или миф: Миф о Бермудском треугольнике #Shorts",
+    "topic": "в Бермудском треугольнике пропадает больше кораблей и самолетов, чем в других частях океана",
+    "source": "myth",
+    "privacy": "public",
+    "ad_campaign": null,
+    "slot": "08:30-10:00",
+    "cta_voice": null,
+    "thumbnail": "ok",
+    "rubric": "ПРАВДА ИЛИ МИФ",
+    "case": null,
+    "question": "А вы верите в мистические тайны океана или доверяете только научным фактам?",
+    "manual": false,
+    "publish_at": null,
+    "slot_date": "2026-11-23"
   }
 ]
