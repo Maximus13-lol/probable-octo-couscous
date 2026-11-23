@@ -687,5 +687,25 @@
     "manual": false,
     "publish_at": null,
     "slot_date": "2026-11-23"
+  },
+  {
+    "date": "2026-11-23",
+    "run_id": "20261123_173839",
+    "video_id": "7sqXTw7T_po",
+    "url": "https://youtube.com/shorts/7sqXTw7T_po",
+    "title": "Дело №6: Космический метроном Хуачжао #Shorts",
+    "topic": "Странный радиосигнал «Хуачжао» из космоса, повторяющийся каждые 16 дней",
+    "source": "gemini_fresh",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "20:30-22:00",
+    "cta_voice": null,
+    "thumbnail": "ok",
+    "rubric": "ТАЙНА",
+    "case": 6,
+    "question": "Как вы думаете, могут ли подобные сигналы быть посланиями от внеземных цивилизаций?",
+    "manual": false,
+    "publish_at": "2026-11-23T18:18:35Z",
+    "slot_date": "2026-11-23"
   }
 ]
