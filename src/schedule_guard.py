@@ -1,11 +1,11 @@
 """Страж расписания: какой слот публикации заполнять в этот запуск.
 
-Слоты (время выхода по МСК) — config/schedule.json, по фазам (первая неделя — 3 ролика, потом — 2).
+Слоты (время выхода по МСК) — config/schedule.json.
 Сборка стартует за lead_minutes до слота; ролик загружается с отложенной публикацией (YouTube publishAt)
-и выходит ровно в слот. Если слот уже прошёл (сбой, задержка) — ролик публикуется сразу.
+и выходит ровно в слот. Публикация возможна до окончания окна.
 
-Заполненные слоты — по publish_log.json (поле slot); защита от дублей — по числу загрузок на канале.
-Пишет в $GITHUB_OUTPUT: run=true|false, slot=HH:MM, publish_at=ISO-UTC (пусто = публиковать сразу).
+Заполненные слоты определяются по publish_log.json (поле slot).
+Пишет в $GITHUB_OUTPUT: run, slot, slot_date, publish_at, deadline.
 """
 from __future__ import annotations
 
@@ -61,10 +61,6 @@ def _is_manual(e: dict) -> bool:
     return bool(e.get("manual")) or ("slot_date" in e and not e.get("slot"))
 
 
-def manual_uploads(day: dt.date) -> int:
-    return sum(1 for e in _today_entries(day) if _is_manual(e))
-
-
 def filled_slots(day: dt.date, slots: list[str]) -> set[str]:
     """Слоты, уже занятые сегодня. Старые записи (до поля slot_date) без slot занимают самые ранние слоты."""
     entries = [e for e in _today_entries(day) if not _is_manual(e)]
@@ -79,68 +75,40 @@ def filled_slots(day: dt.date, slots: list[str]) -> set[str]:
     return filled
 
 
-def long_video_ids() -> set[str]:
-    """Длинные выпуски используют собственный журнал и не занимают слоты Shorts."""
-    return {
-        item.get("video_id") for path in (CONFIG_DIR.parent / "long" / "delivery").glob("*.json")
-        if isinstance(item := load_json(path, default={}), dict) and item.get("video_id")
-    }
+def window_end(day: dt.date, slot: str, tz: ZoneInfo) -> dt.datetime:
+    if "-" in slot:
+        return slot_dt(day, slot.split("-", 1)[1], tz)
+    return dt.datetime.combine(day + dt.timedelta(days=1), dt.time(), tz)
 
 
-def uploads_today_on_channel(day: dt.date, tz: ZoneInfo) -> int | None:
-    try:
-        from .upload import get_youtube_client
-        excluded = long_video_ids()
-        yt = get_youtube_client()
-        if yt is None:
-            return None
-        ch = yt.channels().list(part="contentDetails", mine=True).execute()
-        uploads = ch["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
-        items = yt.playlistItems().list(part="snippet", playlistId=uploads, maxResults=20).execute().get("items", [])
-        n = 0
-        for it in items:
-            added = it.get("snippet", {}).get("publishedAt", "")  # время добавления в загрузки = время загрузки
-            if added:
-                when = dt.datetime.fromisoformat(added.replace("Z", "+00:00")).astimezone(tz)
-                video_id = it["snippet"].get("resourceId", {}).get("videoId")
-                n += when.date() == day and video_id not in excluded
-        return n
-    except Exception as exc:  # noqa: BLE001
-        log.warning("Не удалось посчитать загрузки на канале (%s) — только по журналу", exc)
-        return None
-
-
-def decide(now: dt.datetime | None = None, channel_count=None) -> dict:
+def decide(now: dt.datetime | None = None) -> dict:
     c = cfg()
     tz = ZoneInfo(c["timezone"])
     now = (now or dt.datetime.now(dt.timezone.utc)).astimezone(tz)
     day = now.date()
     slots = slots_for(day, c)
     lead = dt.timedelta(minutes=int(c["lead_minutes"]))
-    due = [s for s in slots if now >= slot_dt(day, s, tz) - lead]
+    due = [s for s in slots if slot_dt(day, s, tz) - lead <= now < window_end(day, s, tz)]
     filled = filled_slots(day, slots)
-    unfilled = [s for s in due if s not in filled]
-    on_channel = uploads_today_on_channel(day, tz) if channel_count is None else channel_count
-    if on_channel is not None:  # внеплановые ролики (ручные запуски) не считаются за слоты
-        on_channel = max(0, on_channel - manual_uploads(day))
-    info = {"run": False, "slot": "", "publish_at": "", "now": now.strftime("%Y-%m-%d %H:%M"),
-            "slots": slots, "due": due, "filled": sorted(filled), "on_channel": on_channel}
-    if not unfilled:
-        info["why"] = "все слоты, которым пора, уже заняты"
-        return info
-    if on_channel is not None and on_channel >= len(due):
-        info["why"] = f"на канале уже {on_channel} загрузок сегодня при {len(due)} слотах к этому времени"
-        return info
-    soon = [s for s in unfilled if slot_dt(day, s, tz) > now + dt.timedelta(minutes=10)]
-    target = soon[0] if soon else unfilled[0]
+    info = {"run": False, "slot": "", "slot_date": "", "publish_at": "", "deadline": "",
+            "now": now.isoformat(), "slots": slots, "due": due, "filled": sorted(filled)}
+    target = next((s for s in due if s not in filled), None)
+    if target is None and now.hour >= 20:
+        # По возможности готовим завтрашние публикации заранее.
+        day += dt.timedelta(days=1)
+        slots = slots_for(day, c)
+        filled = filled_slots(day, slots)
+        target = next((s for s in slots if s not in filled), None)
+        info.update(slots=slots, due=slots, filled=sorted(filled))
+    if target is None and not due:
+        return {**info, "why": "сейчас нет открытого окна сборки"}
+    if target is None:
+        return {**info, "why": "открытые слоты уже заполнены"}
     when = slot_dt(day, target, tz)
-    info.update(run=True, slot=target)
-    if when > now + dt.timedelta(minutes=15):
-        info["publish_at"] = when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        info["why"] = f"готовлю ролик к слоту {target} (отложенная публикация)"
-    else:
-        info["why"] = f"слот {target} уже наступил — публикую сразу после сборки"
-    return info
+    return {**info, "run": True, "slot": target, "slot_date": day.isoformat(),
+            "publish_at": when.astimezone(dt.timezone.utc).isoformat(),
+            "deadline": window_end(day, target, tz).astimezone(dt.timezone.utc).isoformat(),
+            "why": f"готовлю ролик к слоту {target}"}
 
 
 def main() -> int:
@@ -156,7 +124,9 @@ def main() -> int:
     out = os.environ.get("GITHUB_OUTPUT")
     if out:
         with open(out, "a", encoding="utf-8") as f:
-            f.write(f"run={'true' if info['run'] else 'false'}\nslot={info['slot']}\npublish_at={info['publish_at']}\n")
+            f.write(f"run={'true' if info['run'] else 'false'}\n")
+            for key in ("slot", "slot_date", "publish_at", "deadline"):
+                f.write(f"{key}={info.get(key, '')}\n")
     return 0
 
 

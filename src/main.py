@@ -101,7 +101,7 @@ def run(args) -> int:
     try:
         human = None   # сценарий из inbox/ (режим «живой голос»)
         rec = None
-        if human_voice.enabled() and not args.topic:
+        if human_voice.enabled() and not args.topic and not os.environ.get("SLOT"):
             human = human_voice.next_ready()
             if human:
                 rec = human_voice.recording(human)
@@ -193,12 +193,17 @@ def run(args) -> int:
             log.info("Загрузка пропущена (%s). Видео: %s", "--test-ad" if args.test_ad else "--no-upload", final)
         else:
             meta["publish_at"] = os.environ.get("PUBLISH_AT") or None
+            if meta["publish_at"]:
+                now = dt.datetime.now(dt.timezone.utc)
+                deadline = dt.datetime.fromisoformat(os.environ["SLOT_DEADLINE"])
+                if now >= deadline:
+                    raise RuntimeError("Окно публикации Shorts закрыто")
+                when = dt.datetime.fromisoformat(meta["publish_at"])
+                meta["publish_at"] = when.strftime("%Y-%m-%dT%H:%M:%SZ") if when > now else None
             if os.environ.get("PRIVACY_OVERRIDE"):  # пробный ролик — например, unlisted (доступ по ссылке)
                 meta["privacy_status"] = os.environ["PRIVACY_OVERRIDE"]
             res = upload.upload(final, meta, run_dir)
             summary["upload"] = res
-            if cover_path:
-                summary["thumbnail"] = cover.set_thumbnail(res["video_id"], cover_path, wait_for_short=True)
             upload.append_publish_log({
                 "date": dt.date.today().isoformat(), "run_id": run_id, "video_id": res["video_id"],
                 "url": res["url"], "title": meta["title"], "topic": choice["topic"],
@@ -209,8 +214,13 @@ def run(args) -> int:
                 "thumbnail": summary.get("thumbnail"), "rubric": st.get("rubric"), "case": st.get("case"),
                 "question": st.get("question") or None,
                 "manual": os.environ.get("GUARD_SCHEDULED", "").lower() != "true", "publish_at": res.get("publish_at"),
-                "slot_date": dt.datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat(),
+                "slot_date": os.environ.get("SLOT_DATE") or dt.datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat(),
             })
+            if cover_path:
+                summary["thumbnail"] = cover.set_thumbnail(res["video_id"], cover_path, wait_for_short=True)
+                entries = load_json(upload.PUBLISH_LOG_FILE, default=[])
+                entries[-1]["thumbnail"] = summary["thumbnail"]
+                save_json(upload.PUBLISH_LOG_FILE, entries)
             if ad_info:
                 ads.log_impression(ad_info, res["url"], meta["title"])
         done("publisher", t)

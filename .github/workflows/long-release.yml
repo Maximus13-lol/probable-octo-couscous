@@ -1,12 +1,9 @@
-name: Long video release queue
+name: Daily long video
 
 on:
   schedule:
-    - cron: "17 0,4,8,12,16,20 * * *"
+    - cron: "17 */2 * * *"
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths: ['.github/workflows/long-release.yml', 'long/queue.json']
 
 permissions:
   contents: write
@@ -27,36 +24,52 @@ jobs:
       - uses: actions/checkout@v5
         with:
           ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - name: Select the next approved dossier
+      - name: Выбрать ближайший свободный день
         id: selection
         run: |
-          python -m pip install "Pillow>=10,<12"
+          python -m pip install --retries 5 "Pillow>=10,<12"
           python -m src.long_release select long > "$RUNNER_TEMP/episode.json"
           if [ "$(cat "$RUNNER_TEMP/episode.json")" != null ]; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-            episode=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["episode"])' "$RUNNER_TEMP/episode.json")
-            echo "episode=$episode" >> "$GITHUB_OUTPUT"
-          elif [ ! -f long/queue.json ]; then
-            echo "::notice::Очередь длинных выпусков ещё не заполнена"
+            date=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["date"])' "$RUNNER_TEMP/episode.json")
+            echo "date=$date" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/cache/restore@v4
-        if: steps.selection.outputs.ready == 'true'
+        id: draft_cache
+        if: steps.selection.outputs.date != ''
+        with:
+          path: output/long-release/draft/${{ steps.selection.outputs.date }}
+          key: long-draft-v1-${{ steps.selection.outputs.date }}
+      - uses: actions/cache/restore@v4
+        if: steps.selection.outputs.date != ''
         with:
           path: output/long-release/audio/qwen-checkpoints
-          key: long-qwen-v1-${{ steps.selection.outputs.episode }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: long-qwen-v1-${{ steps.selection.outputs.episode }}-
-      - name: Render with the author voice
-        if: steps.selection.outputs.ready == 'true'
+          key: long-qwen-v1-${{ steps.selection.outputs.date }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: long-qwen-v1-${{ steps.selection.outputs.date }}-
+      - name: Подготовить сценарий и архивные кадры
+        if: steps.selection.outputs.date != ''
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          python -m pip install --retries 5 requests
+          python -m src.long_release prepare "$RUNNER_TEMP/episode.json"
+      - uses: actions/cache/save@v4
+        if: steps.selection.outputs.date != '' && steps.draft_cache.outputs.cache-hit != 'true' && hashFiles('output/long-release/draft/*/dossier.json') != ''
+        with:
+          path: output/long-release/draft/${{ steps.selection.outputs.date }}
+          key: long-draft-v1-${{ steps.selection.outputs.date }}
+      - name: Собрать видео голосом автора
+        if: steps.selection.outputs.date != ''
         env:
           VOICE_KEY: ${{ secrets.VOICE_KEY }}
-          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg fonts-dejavu-core
-          python -m pip install -r requirements.txt
+          python -m pip install --retries 5 -r requirements.txt
           python -m venv "$RUNNER_TEMP/qwen-venv"
           qwen="$RUNNER_TEMP/qwen-venv/bin/python"
           "$qwen" -m pip install --index-url https://download.pytorch.org/whl/cpu torch torchaudio
@@ -77,38 +90,72 @@ jobs:
           QWEN_PY="$qwen" python -m src.long_release render "$RUNNER_TEMP/episode.json"
           git restore -- config/voice.json
           duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/long-release/pilot.mp4)
-          python -c 'import sys; d = float(sys.argv[1]); sys.exit(0 if 1020 <= d <= 1800 else f"Unexpected runtime: {d:.0f}s")' "$duration"
+          python -c 'import sys; d = float(sys.argv[1]); sys.exit(0 if 600 <= d <= 1800 else f"Unexpected runtime: {d:.0f}s")' "$duration"
       - uses: actions/cache/save@v4
-        if: always() && steps.selection.outputs.ready == 'true' && hashFiles('output/long-release/audio/qwen-checkpoints/*.json') != ''
+        if: always() && steps.selection.outputs.date != '' && hashFiles('output/long-release/audio/qwen-checkpoints/*.json') != ''
         with:
           path: output/long-release/audio/qwen-checkpoints
-          key: long-qwen-v1-${{ steps.selection.outputs.episode }}-${{ github.run_id }}-${{ github.run_attempt }}
-      - name: Reserve delivery before contacting YouTube
-        if: steps.selection.outputs.ready == 'true'
+          key: long-qwen-v1-${{ steps.selection.outputs.date }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Зарезервировать дату перед загрузкой
+        if: steps.selection.outputs.date != ''
         id: reserve
         run: |
-          episode=$(python -c 'import json,sys; print("{:04d}".format(json.load(open(sys.argv[1]))["episode"]))' "$RUNNER_TEMP/episode.json")
-          file="long/delivery/$episode.json"
+          date="${{ steps.selection.outputs.date }}"
+          file="long/delivery/$date.json"
           git pull --rebase origin "$RELEASE_BRANCH"
           test ! -e "$file"
           mkdir -p long/delivery
-          printf '{"state":"pending","run_id":"%s"}\n' "$GITHUB_RUN_ID" > "$file"
+          python - "$file" "$date" <<'PYRESERVE'
+          import json
+          import os
+          import sys
+          from pathlib import Path
+
+          path, day = sys.argv[1:]
+          draft = Path("output/long-release/draft") / day / "dossier.json"
+          topic = json.loads(draft.read_text(encoding="utf-8"))["topic"]
+          Path(path).write_text(json.dumps({"state": "pending", "run_id": os.environ["GITHUB_RUN_ID"],
+                                           "topic": topic}) + "\n", encoding="utf-8")
+          PYRESERVE
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add -- "$file"
-          git commit -m "Reserve long episode $episode [skip ci]"
-          git push origin "HEAD:$RELEASE_BRANCH"
-          echo "file=$file" >> "$GITHUB_OUTPUT"
-      - name: Schedule the video and save its YouTube ID
+          git commit -m "Reserve long episode $date [skip ci]"
+          for attempt in 1 2 3; do
+            if git pull --rebase origin "$RELEASE_BRANCH" && git push origin "HEAD:$RELEASE_BRANCH"; then
+              echo "file=$file" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+      - name: Запланировать публикацию в YouTube
         if: steps.reserve.outputs.file != ''
         env:
-          DELIVERY_FILE: ${{ steps.reserve.outputs.file }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: |
           python -m src.long_release deliver "$RUNNER_TEMP/episode.json"
-          cp output/long-release/delivery.json "$DELIVERY_FILE"
+      - name: Сохранить квитанцию YouTube
+        if: always() && steps.reserve.outputs.file != '' && hashFiles('output/long-release/delivery.json', 'output/long-release/upload_result.json') != ''
+        env:
+          DELIVERY_FILE: ${{ steps.reserve.outputs.file }}
+        run: |
+          if [ -f output/long-release/delivery.json ]; then
+            cp output/long-release/delivery.json "$DELIVERY_FILE"
+          else
+            python - "$DELIVERY_FILE" <<'PYRECEIPT'
+          import json
+          import sys
+          from pathlib import Path
+
+          path = Path(sys.argv[1])
+          result = json.loads(Path("output/long-release/upload_result.json").read_text(encoding="utf-8"))
+          path.write_text(json.dumps({**json.loads(path.read_text(encoding="utf-8")), **result,
+                                      "state": "uploaded"}) + "\n", encoding="utf-8")
+          PYRECEIPT
+          fi
           git add -- "$DELIVERY_FILE"
           git commit -m 'Record scheduled long episode [skip ci]'
           for attempt in 1 2 3; do
@@ -134,10 +181,12 @@ jobs:
           done
           exit 1
       - uses: actions/upload-artifact@v4
-        if: always() && steps.selection.outputs.ready == 'true'
+        if: always() && steps.selection.outputs.date != ''
         with:
           name: long-release-${{ github.run_number }}
           path: |
+            output/long-release/draft/*/dossier.json
+            output/long-release/sources.json
             output/long-release/thumbnail.jpg
             output/long-release/delivery.json
             output/long-release/upload_result.json

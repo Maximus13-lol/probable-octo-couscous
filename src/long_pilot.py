@@ -91,12 +91,21 @@ def render_frame(chapter: dict, path: Path, backdrop: Path) -> None:
     frame.save(path)
 
 
+CHANNEL_NAME = re.compile(
+    r"\bпапка[\s,.:;—–-]*(?:номер[\s,.:;—–-]*|№\s*)(?:13|тринадцать)\b", re.I
+)
+
+
+def spoken_channel_name(text: str) -> str:
+    return CHANNEL_NAME.sub("Папка номер тринадцать", text)
+
+
 def narration_scenes(chapters: list[dict]) -> list[dict]:
     scenes = []
     for chapter in chapters:
         visuals = [chapter, *chapter.get("visuals", [])]
         shot = 0
-        words = chapter["text"].split()
+        words = re.findall(r"\S*Папка номер тринадцать\S*|\S+", spoken_channel_name(chapter["text"]))
         if len(visuals) > len(words):
             raise ValueError("В главе больше кадров, чем слов для их озвучки")
         while words:
@@ -117,10 +126,9 @@ def render_intro(output: Path) -> Path | None:
     if not source.is_file():
         return None
     clip = output / "intro.mp4"
-    ffmpeg("-i", str(source), "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo",
+    ffmpeg("-i", str(source), "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "4",
            "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=25",
-           "-filter_complex", "[0:a:0]volume=0.8,aresample=48000,apad[a]",
-           "-map", "0:v:0", "-map", "[a]", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+           "-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264", "-pix_fmt", "yuv420p",
            "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(clip))
     return clip
 
@@ -187,11 +195,9 @@ def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
         validate_editorial(dossier)
         from . import narration, tts
 
-        opening = dossier.get("opening") or (
-            f"Привет! Это «Папка номер тринадцать». Сегодня разбираем тему «{dossier['title']}». "
-            "Восстановим ход событий, посмотрим на архивные материалы и выясним, что известно наверняка."
-        )
-        chapters = narration_scenes([{**chapters[0], "text": opening, "visuals": []}, *chapters])
+        if opening := dossier.get("opening"):
+            chapters = [{**chapters[0], "text": opening, "visuals": []}, *chapters]
+        chapters = narration_scenes(chapters)
         resolve_illustrations(chapters, output)
         board = {"scenes": [{"index": scene["index"], "text": scene["text"]} for scene in chapters]}
         voices = tts.synthesize(narration.direct(board, output), output, author_only=True)

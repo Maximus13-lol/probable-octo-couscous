@@ -1,4 +1,4 @@
-"""Select and schedule one approved long episode. Requires explicit publication opt-in."""
+"""Подготовка и отложенная публикация ежедневного длинного выпуска."""
 from __future__ import annotations
 
 import argparse
@@ -8,30 +8,34 @@ import os
 import time
 from pathlib import Path
 
-from .long_pilot import archive_count, read_dossier, render, validate_editorial
-from .long_schedule import plan
+from .long_pilot import read_dossier, render, validate_editorial
+from .long_schedule import MOSCOW
+from .utils import save_json, setup_logging
 
 
 def select(root: Path, now: dt.datetime) -> dict | None:
-    queue = root / "queue.json"
-    if not queue.is_file():
-        return None
-    config = json.loads(queue.read_text(encoding="utf-8"))
-    dossiers = config["dossiers"]
-    if len(dossiers) < 7:
-        raise ValueError("Для первой недели требуется семь утверждённых досье")
-    schedule = plan(dt.date.fromisoformat(config["start"]), len(dossiers))
-    for entry, dossier in zip(schedule, dossiers, strict=True):
-        if (root / "delivery" / f'{entry["episode"]:04d}.json').exists():
+    today = now.astimezone(MOSCOW).date()
+    for offset in range(2):
+        day = today + dt.timedelta(days=offset)
+        when = dt.datetime.combine(day, dt.time(14, 30), MOSCOW)
+        if not dt.timedelta(hours=7) <= when - now <= dt.timedelta(hours=29):
             continue
-        deadline = dt.datetime.fromisoformat(entry["publish_at"].replace("Z", "+00:00"))
-        if not now + dt.timedelta(hours=7) < deadline <= now + dt.timedelta(days=8):
+        if (root / "delivery" / f"{day.isoformat()}.json").exists():
             continue
-        path = (root / dossier).resolve()
-        if not path.is_relative_to(root.resolve()) or not path.is_file():
-            raise ValueError(f"Досье за пределами каталога или отсутствует: {dossier}")
-        return {**entry, "dossier": str(path)}
+        return {"date": day.isoformat(),
+                "publish_at": when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
     return None
+
+
+def prepare(item: dict, output: Path) -> Path:
+    from .long_dossier import prepare as prepare_dossier
+
+    used = set()
+    for path in Path("long/delivery").glob("*.json"):
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if topic := data.get("topic"):
+            used.add(topic)
+    return prepare_dossier(output / "draft" / item["date"], used)
 
 
 def deliver(item: dict, output: Path) -> dict:
@@ -42,13 +46,19 @@ def deliver(item: dict, output: Path) -> dict:
     when = dt.datetime.fromisoformat(item["publish_at"].replace("Z", "+00:00"))
     if when <= dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=30):
         raise ValueError("До запланированного выхода осталось менее 30 минут")
-    dossier = read_dossier(Path(item["dossier"]))
-    sources = list(dict.fromkeys(c["source_url"] for c in dossier["chapters"]))
-    sources.extend(dossier.get("references", {}).values())
+    dossier = read_dossier(output / "draft" / item["date"] / "dossier.json")
+    credits = {}
+    for chapter in dossier["chapters"]:
+        for frame in (chapter, *chapter.get("visuals", [])):
+            credits[frame["source_url"]] = f"{frame['credit']} · {frame['license']} · {frame['source_url']}"
+    sources = [*dossier.get("references", {}).values(), *credits.values()]
+    description = "Папка №13 · Документальный разбор\n\nИсточники и архивные материалы\n" + "\n".join(sources)
+    if len(description.encode("utf-8")) > 4900:
+        raise ValueError("Атрибуция кадров не помещается в описание YouTube")
+    description = description.replace("<", "‹").replace(">", "›")
     metadata = {
         "title": dossier["title"][:100],
-        "description": ("Папка №13 · Документальный разбор\n\nИсточники и архивные материалы\n"
-                        + "\n".join(dict.fromkeys(sources)))[:4900],
+        "description": description,
         "tags": ["история", "трукрайм", "Папка №13"],
         "category_id": "27", "language": "ru", "made_for_kids": False,
         "privacy_status": "private", "publish_at": item["publish_at"],
@@ -56,6 +66,8 @@ def deliver(item: dict, output: Path) -> dict:
     }
     result = upload.upload(output / "pilot.mp4", metadata, output)
     result["url"] = f'https://www.youtube.com/watch?v={result["video_id"]}'
+    result.update(topic=dossier["topic"], publish_at=item["publish_at"], state="uploaded")
+    save_json(output / "delivery.json", result)
     # Сохраняем ID сразу: после задержки обработки повторная загрузка создаст дубль.
     client = upload.get_youtube_client()
     if client is None:
@@ -80,8 +92,9 @@ def deliver(item: dict, output: Path) -> dict:
 
 
 def main() -> None:
+    setup_logging()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["select", "render", "deliver"])
+    parser.add_argument("mode", choices=["select", "prepare", "render", "deliver"])
     parser.add_argument("item", type=Path)
     parser.add_argument("--output", type=Path, default=Path("output/long-release"))
     args = parser.parse_args()
@@ -89,25 +102,15 @@ def main() -> None:
         print(json.dumps(select(args.item, dt.datetime.now(dt.timezone.utc))))
         return
     item = json.loads(args.item.read_text(encoding="utf-8"))
-    if args.mode == "render":
-        dossier = read_dossier(Path(item["dossier"]))
+    if args.mode == "prepare":
+        prepare(item, args.output)
+    elif args.mode == "render":
+        dossier = read_dossier(args.output / "draft" / item["date"] / "dossier.json")
         validate_editorial(dossier, require_sections=True)
-        count = archive_count(dossier)
-        if count < 15:
-            raise ValueError(f"Для длинного выпуска нужно 15–20 архивных кадров, найдено {count}")
-        for chapter in dossier["chapters"]:
-            visuals = chapter.setdefault("visuals", [])
-            if not any("prompt" in visual for visual in visuals):
-                visuals.append({"prompt": (
-                    f"Illustrate this section of a Russian historical documentary about {dossier['title']}: "
-                    + chapter["text"][:450]
-                )})
         render(dossier, args.output)
     else:
-        result = deliver(item, args.output)
-        (args.output / "delivery.json").write_text(json.dumps(result), encoding="utf-8")
+        save_json(args.output / "delivery.json", deliver(item, args.output))
 
 
 if __name__ == "__main__":
     main()
-

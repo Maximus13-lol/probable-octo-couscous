@@ -1,4 +1,4 @@
-"""Утренняя рубрика (слот 08:00 МСК), чередуется по дням:
+"""Утренняя рубрика (08:00–09:30 МСК), чередуется по дням:
 - «Этот день в истории тайн» — загадочное событие, случившееся в этот день (Wikipedia «On this day»), 25–35 с;
 - «Правда или миф: 20 секунд» — популярное утверждение → доказательства → вердикт, ~20 с.
 
@@ -18,7 +18,7 @@ from .utils import CONFIG_DIR, env, load_json, log
 MONTHS = ["января", "февраля", "марта", "апреля", "мая", "июня", "июля", "августа", "сентября", "октября",
           "ноября", "декабря"]
 UA = {"User-Agent": "ShortsPipeline/1.0 (educational shorts; https://github.com) python-requests"}
-DEFAULTS = {"slots": {"08:30-10:00": "morning"}, "morning_rotation": ["this_day", "myth20"]}
+DEFAULTS = {"slots": {"08:00-09:30": "morning"}, "morning_rotation": ["this_day", "myth20"]}
 
 # параметры форматов: длина текста, число сцен, плашка
 SPECS = {
@@ -43,6 +43,8 @@ def config() -> dict:
 
 
 def today_msk() -> dt.date:
+    if day := env("SLOT_DATE"):
+        return dt.date.fromisoformat(day)
     return dt.datetime.now(ZoneInfo("Europe/Moscow")).date()
 
 
