@@ -707,5 +707,25 @@
     "manual": false,
     "publish_at": "2026-11-23T18:18:35Z",
     "slot_date": "2026-11-23"
+  },
+  {
+    "date": "2026-11-24",
+    "run_id": "20261124_205820",
+    "video_id": "qc7ug2pjWoM",
+    "url": "https://youtube.com/shorts/qc7ug2pjWoM",
+    "title": "Дело №7: Тайна ночного звонка в дверь #Shorts",
+    "topic": "Таинственный инцидент с умным дверным звонком: что напугало жителей ночью",
+    "source": "youtube",
+    "privacy": "public",
+    "ad_campaign": null,
+    "slot": null,
+    "cta_voice": null,
+    "thumbnail": "ok",
+    "rubric": "ПРАВДА ИЛИ МИФ",
+    "case": 7,
+    "question": "Как думаете, что могло вызвать срабатывание камеры при абсолютно пустом крыльце?",
+    "manual": true,
+    "publish_at": null,
+    "slot_date": "2026-11-25"
   }
 ]
