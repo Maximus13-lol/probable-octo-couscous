@@ -77,10 +77,13 @@ def script(article: dict) -> dict:
             written = sum(len(chapter["text"].split()) for chapter in chapters)
             minimum = max(200, 1840 - written - 330 * remaining)
             maximum = min(330, 2200 - written - 200 * remaining)
-            target = min(max(250, minimum), maximum)
+            average = (2000 - written) // (remaining + 1)
+            target = min(max(average + 55, minimum), maximum)
             previous = "\n\n".join(chapter["text"] for chapter in chapters)
             chapter = gemini.generate_json(f"""Напиши только главу {len(chapters) + 1} из 8.
-{task} Ориентир — {target} слов, допустимо {minimum}–{maximum}. Верни объект {{"text": "..."}}.
+{task} Цель — {target} слов именно в поле text, допустимо {minimum}–{maximum}.
+Дай несколько содержательных абзацев, добавляя подтверждённые источником подробности.
+Проверь число слов перед ответом. Верни объект {{"text": "..."}}.
 Документальный рассказ на русском. Используй только факты источника, пересказывай своими словами.
 Отделяй версии от фактов. Числа и даты пиши словами. Без приветствия, анонсов и призывов.
 Продолжай предыдущие главы, раскрывая новые детали без повтора.
