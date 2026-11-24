@@ -129,7 +129,7 @@ def render_intro(output: Path) -> Path | None:
     ffmpeg("-i", str(source), "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "4",
            "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=25",
            "-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264", "-pix_fmt", "yuv420p",
-           "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(clip))
+           *speech_tempo, "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(clip))
     return clip
 
 
@@ -201,6 +201,7 @@ def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
         resolve_illustrations(chapters, output)
         board = {"scenes": [{"index": scene["index"], "text": scene["text"]} for scene in chapters]}
         voices = tts.synthesize(narration.direct(board, output), output, author_only=True)
+    speech_tempo = [] if smoke else ["-af", "atempo=1.06"]
     intro = render_intro(output)
     clips = [intro.name] if intro else []
     for index, (chapter, voice) in enumerate(zip(chapters, voices, strict=True), start=1):
