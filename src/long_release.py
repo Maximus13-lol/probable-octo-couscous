@@ -9,21 +9,27 @@ import time
 from pathlib import Path
 
 from .long_pilot import read_dossier, render, validate_editorial
-from .long_schedule import MOSCOW
+from .long_schedule import MOSCOW, plan
 from .utils import save_json, setup_logging
 
 
-def select(root: Path, now: dt.datetime) -> dict | None:
+def select(root: Path, now: dt.datetime, *, publish_now: bool = False) -> dict | None:
     today = now.astimezone(MOSCOW).date()
-    for offset in range(2):
-        day = today + dt.timedelta(days=offset)
-        when = dt.datetime.combine(day, dt.time(14, 30), MOSCOW)
+    delivery = root / "delivery"
+    if publish_now:
+        if (delivery / f"{today.isoformat()}.json").exists():
+            return None
+        return {"date": today.isoformat(), "publish_at": None}
+
+    start = dt.date(2026, 11, 24)
+    count = max(1, (today - start).days + 2)
+    for item in plan(start, count):
+        when = dt.datetime.fromisoformat(item["local_time"])
         if not dt.timedelta(hours=7) <= when - now <= dt.timedelta(hours=29):
             continue
-        if (root / "delivery" / f"{day.isoformat()}.json").exists():
-            continue
-        return {"date": day.isoformat(),
-                "publish_at": when.astimezone(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")}
+        day = when.date().isoformat()
+        if not (delivery / f"{day}.json").exists():
+            return {"date": day, "publish_at": item["publish_at"]}
     return None
 
 
@@ -43,9 +49,11 @@ def deliver(item: dict, output: Path) -> dict:
         raise RuntimeError("Автопубликация длинных видео выключена")
     from . import cover, upload
 
-    when = dt.datetime.fromisoformat(item["publish_at"].replace("Z", "+00:00"))
-    if when <= dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=30):
-        raise ValueError("До запланированного выхода осталось менее 30 минут")
+    publish_at = item["publish_at"]
+    if publish_at:
+        when = dt.datetime.fromisoformat(publish_at.replace("Z", "+00:00"))
+        if when <= dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=30):
+            raise ValueError("До запланированного выхода осталось менее 30 минут")
     dossier = read_dossier(output / "draft" / item["date"] / "dossier.json")
     credits = {}
     for chapter in dossier["chapters"]:
@@ -61,7 +69,7 @@ def deliver(item: dict, output: Path) -> dict:
         "description": description,
         "tags": ["история", "трукрайм", "Папка №13"],
         "category_id": "27", "language": "ru", "made_for_kids": False,
-        "privacy_status": "private", "publish_at": item["publish_at"],
+        "privacy_status": "private" if publish_at else "public", "publish_at": publish_at,
         "contains_synthetic_media": True, "paid_promotion": False,
     }
     result = upload.upload(output / "pilot.mp4", metadata, output)
@@ -84,6 +92,7 @@ def deliver(item: dict, output: Path) -> dict:
     result["upload_status"] = upload_status
     result["rejection_reason"] = status.get("rejectionReason") or status.get("failureReason")
     result["confirmed_publish_at"] = status.get("publishAt")
+    result["confirmed_privacy"] = status.get("privacyStatus")
     result["thumbnail"] = (
         cover.set_thumbnail(result["video_id"], output / "thumbnail.jpg")
         if upload_status == "processed" else "ожидает успешной обработки"
@@ -97,9 +106,10 @@ def main() -> None:
     parser.add_argument("mode", choices=["select", "prepare", "render", "deliver"])
     parser.add_argument("item", type=Path)
     parser.add_argument("--output", type=Path, default=Path("output/long-release"))
+    parser.add_argument("--publish-now", action="store_true")
     args = parser.parse_args()
     if args.mode == "select":
-        print(json.dumps(select(args.item, dt.datetime.now(dt.timezone.utc))))
+        print(json.dumps(select(args.item, dt.datetime.now(dt.timezone.utc), publish_now=args.publish_now)))
         return
     item = json.loads(args.item.read_text(encoding="utf-8"))
     if args.mode == "prepare":
