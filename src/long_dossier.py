@@ -45,44 +45,64 @@ def articles(used: set[str]):
 
 
 def script(article: dict) -> dict:
-    def validate(obj):
-        if not isinstance(obj, dict):
-            return "верни объект JSON"
-        for key, limit in (("title", 95), ("headline", 28)):
-            text = obj.get(key)
-            if not isinstance(text, str) or not 4 <= len(text.strip()) <= limit:
-                return f"нужен {key} длиной не более {limit} символов"
-        chapters = obj.get("chapters")
-        if not isinstance(chapters, list) or len(chapters) != 8:
-            return "нужны восемь глав, по две на каждый раздел"
-        for chapter, section in zip(chapters, [s for s in SECTION_ORDER for _ in range(2)], strict=True):
-            if not isinstance(chapter, dict) or chapter.get("section") != section:
-                return "в каждой главе укажи section из задания и соблюдай порядок"
-            text = chapter.get("text")
-            if not isinstance(text, str) or not 200 <= len(text.split()) <= 330:
-                return "в каждой главе должно быть от 200 до 330 слов связного текста"
-        if not 1840 <= sum(len(c["text"].split()) for c in chapters) <= 2200:
-            return "в восьми главах вместе должно быть 1840–2200 слов"
-        body = " ".join([obj["title"], obj["headline"], *(c["text"] for c in chapters)])
-        if quality.unsafe_topic(body):
+    source = f"Источник: {article['title']}\n<source>\n{article['extract']}\n</source>"
+    chapters = []
+    section_tasks = {
+        "context": ("Начни с конкретного эпизода и обозначь главную загадку.",
+                    "Раскрой необходимый исторический контекст."),
+        "event": ("Изложи, что произошло, в хронологическом порядке.",
+                  "Покажи важные детали события и первые последствия."),
+        "investigation": ("Опиши, какие свидетельства изучили и что они подтвердили.",
+                          "Разбери версии и объясни, какие вопросы остались открытыми."),
+        "outcome": ("Расскажи об установленных итогах и дальнейшей судьбе дела.",
+                    "Заверши рассказ, отделив известное от нерешённого."),
+    }
+
+    def validate_chapter(obj):
+        text = obj.get("text") if isinstance(obj, dict) else None
+        if not isinstance(text, str) or not 230 <= len(text.split()) <= 275:
+            return "нужна глава от 230 до 275 слов"
+        if quality.unsafe_topic(text):
             return "исключи графичные описания и небезопасные подробности"
         try:
-            validate_editorial(obj, require_sections=True)
+            validate_editorial({"chapters": [{"text": c["text"]} for c in chapters] + [{"text": text}]})
         except ValueError as exc:
             return str(exc)
         return None
 
-    return gemini.generate_json(f"""Напиши документальный сценарий на русском по источнику ниже.
-Используй только факты из источника, явно отделяй гипотезы от фактов. Пересказывай своими словами.
-Без приветствия, представления канала, призывов подписаться и повторов. Начни прямо с события.
-Восемь глав по 235–265 слов, по две на каждый раздел: context, event, investigation, outcome.
-Каждая глава раскрывает новые подробности. Числа и даты пиши словами в нужном падеже.
-Сократи текст обложки до трёх коротких слов и 28 символов. Заголовок видео — до 95 символов.
-Формат: {{"title": "...", "headline": "...", "chapters": [{{"section":"context","text":"..."}}]}}.
-Источник: {article['title']}
-<source>
-{article['extract']}
-</source>""", temperature=0.35, validate=validate, attempts=4)
+    for section in SECTION_ORDER:
+        for task in section_tasks[section]:
+            previous = "\n\n".join(chapter["text"] for chapter in chapters)
+            chapter = gemini.generate_json(f"""Напиши только главу {len(chapters) + 1} из 8.
+{task} Ориентир — 250 слов. Верни объект {{"text": "..."}}.
+Документальный рассказ на русском. Используй только факты источника, пересказывай своими словами.
+Отделяй версии от фактов. Числа и даты пиши словами. Без приветствия, анонсов и призывов.
+Продолжай предыдущие главы, раскрывая новые детали без повтора.
+{source}
+<previous_chapters>
+{previous}
+</previous_chapters>""", temperature=0.35, validate=validate_chapter, attempts=4)
+            chapters.append({"section": section, "text": chapter["text"].strip()})
+
+    def validate_titles(obj):
+        if not isinstance(obj, dict):
+            return "нужен объект JSON"
+        for key, limit in (("title", 95), ("headline", 28)):
+            value = obj.get(key)
+            if not isinstance(value, str) or not 4 <= len(value.strip()) <= limit:
+                return f"нужен {key} длиной не более {limit} символов"
+        if quality.unsafe_topic(f"{obj['title']} {obj['headline']}"):
+            return "исключи графичные описания и небезопасные подробности"
+        return None
+
+    titles = gemini.generate_json(f"""Придумай русское название документального видео по источнику.
+Верни объект {{"title": "до 95 символов", "headline": "до 28 символов, максимум три слова"}}.
+Без домыслов и графичных деталей.
+{source}""", temperature=0.35, validate=validate_titles, attempts=4)
+    dossier = {"title": titles["title"].strip(), "headline": titles["headline"].strip(),
+               "chapters": chapters}
+    validate_editorial(dossier, require_sections=True)
+    return dossier
 
 
 def visuals(article: dict, folder: Path) -> list[dict]:

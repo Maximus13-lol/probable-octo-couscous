@@ -133,9 +133,10 @@ def main() -> None:
                 continue
         best = None
         attempts = 0
-        for mode, seed in (("icl", 1), ("icl", 7), ("icl", 23), ("xvec", 1), ("xvec", 7)):
-            if checkpoint_dir and attempts >= (1 if round_no == 0 else 3):
-                break
+        variants = (("icl", 1), ("icl", 7), ("icl", 23), ("xvec", 1), ("xvec", 7))
+        if checkpoint_dir:
+            variants = variants[:1] if round_no == 0 else (variants[0], variants[1], variants[3])
+        for mode, seed in variants:
             if not checkpoint_dir and best is not None and time.time() - t_start > budget and best[0] >= min_recall - 0.1:
                 break  # время озвучки вышло — берём лучший разборчивый вариант
             attempts += 1
