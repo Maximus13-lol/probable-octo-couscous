@@ -52,4 +52,5 @@ jobs:
         run: python -m src.publish_short_artifact recovered
       - name: Save publication log
         if: always() && steps.source.outcome == 'success'
-        run: bash tools/save_state.sh "chore: сохранить восстановленную публикацию Shorts [skip ci]"
+        run: |
+          bash tools/save_state.sh "chore: сохранить восстановленную публикацию Shorts [skip ci]"
