@@ -12,7 +12,8 @@ from .utils import CONFIG_DIR, PUBLISH_LOG_FILE, env, load_json, log, save_json
 
 TOKEN_URI = "https://oauth2.googleapis.com/token"
 SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googleapis.com/auth/youtube.readonly"]
-RETRIABLE_STATUS = {500, 502, 503, 504}
+RETRIABLE_STATUS = {429, 500, 502, 503, 504}
+UPLOAD_RETRIES = 5
 MAX_TITLE = 100
 MAX_DESCRIPTION = 4900
 
@@ -158,14 +159,14 @@ def upload(video: Path, meta: dict, run_dir: Path) -> dict:
                     if status:
                         log.info("Загрузка: %d%%", int(status.progress() * 100))
                 except HttpError as exc:
-                    if exc.resp.status not in RETRIABLE_STATUS or attempt >= 6:
+                    if exc.resp.status not in RETRIABLE_STATUS or attempt >= UPLOAD_RETRIES:
                         raise
                     attempt += 1
                     delay = min(64, 2 ** attempt) * (0.8 + 0.4 * random.random())
                     log.warning("Загрузка: HTTP %s, повтор через %.0f с", exc.resp.status, delay)
                     time.sleep(delay)
                 except (ConnectionError, TimeoutError, OSError) as exc:
-                    if attempt >= 6:
+                    if attempt >= UPLOAD_RETRIES:
                         raise
                     attempt += 1
                     log.warning("Загрузка: сеть (%s), повтор", exc)
