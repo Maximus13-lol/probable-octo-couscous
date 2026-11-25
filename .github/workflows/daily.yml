@@ -156,6 +156,12 @@ jobs:
           ~/qwen-venv/bin/python -c "import qwen_tts, faster_whisper; print('qwen-tts ok')" \
             && echo "QWEN_PY=$HOME/qwen-venv/bin/python" >> "$GITHUB_ENV" || echo "::warning::Qwen3-TTS недоступен"
 
+      - name: Кэш резервного Z-Image Turbo
+        if: steps.guard.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/shorts-zimage
+          key: zimage-cpu-52491bd-${{ runner.os }}-${{ runner.arch }}
       - name: Конвейер
         if: steps.guard.outputs.run == 'true'
         env:
@@ -167,6 +173,7 @@ jobs:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
           POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
+          ZIMAGE_FALLBACK: 'true'
           TOPIC: ${{ inputs.topic }}
           PILOT: ${{ inputs.pilot }}
           RUBRIC: ${{ inputs.rubric }}
