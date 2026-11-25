@@ -599,7 +599,7 @@ def _synth_qwen(narr: list[dict], adir: Path, *, checkpoint: bool = False) -> li
     bad = [k for k, v in done.items()
            if k != "cta" and (not v["ok"] if checkpoint else v["recall"] < 0.6)]
     if bad:
-        raise RuntimeError(f"Qwen3-TTS: фразы {bad} озвучены неразборчиво — откат на запасной голос")
+        raise RuntimeError(f"Qwen3-TTS: фразы {bad} не прошли проверку разборчивости")
     result = []
     for sc in narr:
         raw = adir / f"q_{sc['index']:02d}.wav"
@@ -647,12 +647,18 @@ def providers() -> list[str]:
     return [p for p in order if ok[p]]
 
 
-def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False, *, author_only: bool = False) -> list[dict]:
+def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False, *,
+               author_only: bool = False, allow_voice_fallback: bool = False) -> list[dict]:
     adir = run_dir / "audio"
     adir.mkdir(parents=True, exist_ok=True)
-    if author_only and not qwen_available():
+    if author_only and not allow_voice_fallback and not qwen_available():
         raise TtsFatal("Недоступна озвучка голосом автора")
-    provs = ["qwen"] if author_only else providers()
+    if author_only:
+        provs = ["qwen"] if qwen_available() else []
+        if allow_voice_fallback:
+            provs.extend(p for p in providers() if p != "qwen")
+    else:
+        provs = providers()
     if not provs:
         if not allow_silent:
             raise TtsFatal("Нет ключей озвучки: задайте GEMINI_API_KEY (Gemini TTS) или AZURE_SPEECH_KEY/REGION")
@@ -665,10 +671,12 @@ def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False, *, a
         try:
             log.info("Озвучка: %s", prov)
             fn = {"gemini": _synth_gemini, "azure": _synth_azure, "vosk": _synth_vosk, "qwen": _synth_qwen}[prov]
-            result = fn(narr, adir, checkpoint=True) if author_only else fn(narr, adir)
+            result = fn(narr, adir, checkpoint=True) if author_only and prov == "qwen" else fn(narr, adir)
             save_json(run_dir / "tts.json", result)
             return result
         except Exception as exc:  # noqa: BLE001
             last = exc
             log.warning("Провайдер %s не сработал: %s", prov, exc)
-    raise RuntimeError(f"Озвучка не удалась: {last}")
+    if author_only and not allow_voice_fallback:
+        raise RuntimeError(f"Озвучка голосом автора не удалась. Запасной голос отключён: {last}") from last
+    raise RuntimeError(f"Озвучка не удалась: {last}") from last
