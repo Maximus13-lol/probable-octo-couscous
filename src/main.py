@@ -150,13 +150,14 @@ def run(args) -> int:
         t = step(6, "озвучка (Vosk / Gemini TTS / Azure)")
         author_required = not args.no_upload and not args.test_ad
         voice = (human_voice.voice_from_recording(rec, narr, run_dir) if rec
-                 else tts.synthesize(narr, run_dir, allow_silent=args.no_upload, author_only=author_required))
+                 else tts.synthesize(narr, run_dir, allow_silent=args.no_upload, author_only=author_required,
+                                     allow_voice_fallback=args.allow_voice_fallback))
         cta_cfg = cta.config()
         cta_audio = None
         if cta_cfg.get("enabled"):  # сначала ваша живая запись (assets/cta/voice), иначе голос Vosk
             cta_audio = tts.pick_cta_recording(run_dir, voice)
             if not cta_audio:
-                if author_required:
+                if author_required and (not args.allow_voice_fallback or voice[0]["voice"] == "qwen:author"):
                     cta_audio = tts.qwen_cta(run_dir)
                 else:
                     cta_audio = tts.synth_cta(cta_cfg["voice_text"], run_dir, voice)
@@ -246,6 +247,7 @@ def main(argv=None) -> int:
     p.add_argument("--no-upload", action="store_true", help="не загружать на YouTube")
     p.add_argument("--test-ad", action="store_true", help="вставить тестовую рекламу (подразумевает --no-upload)")
     p.add_argument("--ad-campaign", help="принудительно использовать кампанию с этим id")
+    p.add_argument("--allow-voice-fallback", action="store_true", help="разрешить запасной голос при публикации")
     p.add_argument("--topic", help="задать тему вручную")
     p.add_argument("--mark-used", action="store_true", help="записать тему в used_topics.json даже при --no-upload")
     p.add_argument("-v", "--verbose", action="store_true")
