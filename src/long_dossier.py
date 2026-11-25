@@ -12,7 +12,7 @@ from PIL import Image, ImageOps
 
 from . import archive, facts, gemini, quality
 from .long_pilot import SECTION_ORDER, validate_editorial
-from .utils import log, retry
+from .utils import log, retry, retry_generation
 
 # Стартовые темы для канала. Когда они исчерпаны, поиск продолжает Википедия.
 TOPICS = (
@@ -80,7 +80,7 @@ def script(article: dict) -> dict:
             average = (2000 - written) // (remaining + 1)
             target = min(max(average + 55, minimum), maximum)
             previous = "\n\n".join(chapter["text"] for chapter in chapters)
-            chapter = gemini.generate_json(f"""Напиши только главу {len(chapters) + 1} из 8.
+            chapter = retry_generation(gemini.generate_json, f"""Напиши только главу {len(chapters) + 1} из 8.
 {task} Цель — {target} слов именно в поле text, допустимо {minimum}–{maximum}.
 Дай несколько содержательных абзацев, добавляя подтверждённые источником подробности.
 Проверь число слов перед ответом. Верни объект {{"text": "..."}}.
@@ -104,7 +104,7 @@ def script(article: dict) -> dict:
             return "исключи графичные описания и небезопасные подробности"
         return None
 
-    titles = gemini.generate_json(f"""Придумай русское название документального видео по источнику.
+    titles = retry_generation(gemini.generate_json, f"""Придумай русское название документального видео по источнику.
 Верни объект {{"title": "до 95 символов", "headline": "до 28 символов, максимум три слова"}}.
 Без домыслов и графичных деталей.
 {source}""", temperature=0.35, validate=validate_titles, attempts=4)

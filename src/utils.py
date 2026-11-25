@@ -65,6 +65,21 @@ def retry(
     return deco
 
 
+def retry_generation(operation, *args, **kwargs):
+    """Retry a failed generation stage while keeping previously accepted outputs."""
+    deadline = time.monotonic() + 300
+    for attempt in range(6):
+        try:
+            return operation(*args, **kwargs)
+        except (RuntimeError, ValueError, OSError) as exc:
+            delay = 5 * (attempt + 1)
+            if attempt == 5 or time.monotonic() + delay >= deadline:
+                raise
+            log.warning("Генерация %s: повтор %d/5 через %d с (%s)",
+                        operation.__name__, attempt + 1, delay, exc)
+            time.sleep(delay)
+
+
 def load_json(path: Path, default: Any = None) -> Any:
     try:
         with open(path, encoding="utf-8") as f:

@@ -12,7 +12,7 @@ from urllib.parse import urlsplit
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
 from .long_preview import SIZE, make_preview
-from .utils import find_font
+from .utils import find_font, retry_generation
 
 
 def dossier_image(root: Path, relative_path: str) -> Path:
@@ -200,7 +200,8 @@ def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
         chapters = narration_scenes(chapters)
         resolve_illustrations(chapters, output)
         board = {"scenes": [{"index": scene["index"], "text": scene["text"]} for scene in chapters]}
-        voices = tts.synthesize(narration.direct(board, output), output, vosk_only=True)
+        directed = retry_generation(narration.direct, board, output)
+        voices = retry_generation(tts.synthesize, directed, output, vosk_only=True)
     speech_tempo = [] if smoke else ["-af", "atempo=1.06"]
     intro = render_intro(output)
     clips = [intro.name] if intro else []
