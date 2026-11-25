@@ -1,57 +1,44 @@
-name: Daily long video
-
+name: Dry run long episode (no YouTube)
 on:
-  schedule:
-    - cron: "17 */2 * * *"
   workflow_dispatch:
-    inputs:
-      publish_now:
-        description: "Опубликовать сразу после сборки"
-        type: boolean
-        default: false
-
+  push:
+    branches: [test/long-vosK-no-upload]
+    paths: [.github/workflows/long-release.yml]
 permissions:
-  contents: write
-
-concurrency:
-  group: long-video-release
-  cancel-in-progress: false
-
+  contents: read
+  actions: read
 jobs:
-  stage:
-    if: vars.LONG_PUBLICATION_ENABLED != 'false' && github.ref_name == github.event.repository.default_branch
+  wait-for-short:
     runs-on: ubuntu-latest
-    timeout-minutes: 345
-    env:
-      LONG_PUBLICATION_ENABLED: 'true'
-      RELEASE_BRANCH: ${{ github.event.repository.default_branch }}
+    timeout-minutes: 150
+    steps:
+      - name: Wait for Shorts dry run to finish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          while true; do
+            result=$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/45717545778" --jq '.status + " " + (.conclusion // "")')
+            if [[ "$result" == completed* ]]; then
+              echo "Shorts run: $result"
+              break
+            fi
+            sleep 30
+          done
+  render:
+    needs: wait-for-short
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.repository.default_branch }}
-          fetch-depth: 0
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - name: Выбрать ближайший свободный день
+      - name: Select test date
         id: selection
-        env:
-          PUBLISH_NOW: ${{ inputs.publish_now }}
         run: |
-          python -m pip install --retries 5 "Pillow>=10,<12"
-          args=()
-          if [ "$PUBLISH_NOW" = true ]; then args+=(--publish-now); fi
-          python -m src.long_release select long "${args[@]}" > "$RUNNER_TEMP/episode.json"
-          if [ "$(cat "$RUNNER_TEMP/episode.json")" != null ]; then
-            date=$(python -c 'import json,sys; print(json.load(open(sys.argv[1]))["date"])' "$RUNNER_TEMP/episode.json")
-            echo "date=$date" >> "$GITHUB_OUTPUT"
-          fi
-      - uses: actions/cache/restore@v4
-        id: draft_cache
-        if: steps.selection.outputs.date != ''
-        with:
-          path: output/long-release/draft/${{ steps.selection.outputs.date }}
-          key: long-draft-v1-${{ steps.selection.outputs.date }}
+          date=$(TZ=Europe/Moscow date +%F)
+          printf '{"date":"%s","publish_at":null}\n' "$date" > "$RUNNER_TEMP/episode.json"
+          echo "date=$date" >> "$GITHUB_OUTPUT"
       - name: Подготовить сценарий и архивные кадры
         if: steps.selection.outputs.date != ''
         env:
@@ -60,11 +47,6 @@ jobs:
         run: |
           python -m pip install --retries 5 requests
           python -m src.long_release prepare "$RUNNER_TEMP/episode.json"
-      - uses: actions/cache/save@v4
-        if: steps.selection.outputs.date != '' && steps.draft_cache.outputs.cache-hit != 'true' && hashFiles('output/long-release/draft/*/dossier.json') != ''
-        with:
-          path: output/long-release/draft/${{ steps.selection.outputs.date }}
-          key: long-draft-v1-${{ steps.selection.outputs.date }}
       - name: Собрать видео локальным голосом Vosk
         if: steps.selection.outputs.date != ''
         env:
@@ -76,103 +58,13 @@ jobs:
           python -m src.long_release render "$RUNNER_TEMP/episode.json"
           duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/long-release/pilot.mp4)
           python -c 'import sys; d = float(sys.argv[1]); sys.exit(0 if 600 <= d <= 1800 else f"Unexpected runtime: {d:.0f}s")' "$duration"
-      - name: Зарезервировать дату перед загрузкой
-        if: steps.selection.outputs.date != ''
-        id: reserve
-        run: |
-          date="${{ steps.selection.outputs.date }}"
-          file="long/delivery/$date.json"
-          git pull --rebase origin "$RELEASE_BRANCH"
-          test ! -e "$file"
-          mkdir -p long/delivery
-          python - "$file" "$date" <<'PYRESERVE'
-          import json
-          import os
-          import sys
-          from pathlib import Path
-
-          path, day = sys.argv[1:]
-          draft = Path("output/long-release/draft") / day / "dossier.json"
-          topic = json.loads(draft.read_text(encoding="utf-8"))["topic"]
-          Path(path).write_text(json.dumps({"state": "pending", "run_id": os.environ["GITHUB_RUN_ID"],
-                                           "topic": topic}) + "\n", encoding="utf-8")
-          PYRESERVE
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -- "$file"
-          git commit -m "Reserve long episode $date [skip ci]"
-          for attempt in 1 2 3; do
-            if git pull --rebase origin "$RELEASE_BRANCH" && git push origin "HEAD:$RELEASE_BRANCH"; then
-              echo "file=$file" >> "$GITHUB_OUTPUT"
-              exit 0
-            fi
-            sleep 10
-          done
-          exit 1
-      - name: Отправить выпуск на YouTube
-        if: steps.reserve.outputs.file != ''
-        env:
-          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
-          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
-          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-        run: |
-          python -m src.long_release deliver "$RUNNER_TEMP/episode.json"
-      - name: Сохранить квитанцию YouTube
-        if: always() && steps.reserve.outputs.file != '' && hashFiles('output/long-release/delivery.json', 'output/long-release/upload_result.json') != ''
-        env:
-          DELIVERY_FILE: ${{ steps.reserve.outputs.file }}
-        run: |
-          if [ -f output/long-release/delivery.json ]; then
-            cp output/long-release/delivery.json "$DELIVERY_FILE"
-          else
-            python - "$DELIVERY_FILE" <<'PYRECEIPT'
-          import json
-          import sys
-          from pathlib import Path
-
-          path = Path(sys.argv[1])
-          result = json.loads(Path("output/long-release/upload_result.json").read_text(encoding="utf-8"))
-          path.write_text(json.dumps({**json.loads(path.read_text(encoding="utf-8")), **result,
-                                      "state": "uploaded"}) + "\n", encoding="utf-8")
-          PYRECEIPT
-          fi
-          git add -- "$DELIVERY_FILE"
-          git commit -m 'Record scheduled long episode [skip ci]'
-          for attempt in 1 2 3; do
-            if git pull --rebase origin "$RELEASE_BRANCH" && git push origin "HEAD:$RELEASE_BRANCH"; then
-              python - <<'PY'
-          import datetime as dt
-          import json
-          import os
-          from pathlib import Path
-
-          result = json.loads(Path(os.environ["DELIVERY_FILE"]).read_text(encoding="utf-8"))
-          if result["upload_status"] != "processed":
-              raise SystemExit(f"YouTube processing: {result['upload_status']} ({result['rejection_reason']})")
-          actual = result["confirmed_publish_at"]
-          expected = result["publish_at"]
-          if expected:
-              if not actual or dt.datetime.fromisoformat(actual) != dt.datetime.fromisoformat(expected):
-                  raise SystemExit("YouTube did not confirm the requested publication time")
-          elif result["confirmed_privacy"] != "public":
-              raise SystemExit("YouTube did not confirm public visibility")
-          if result["thumbnail"] != "ok":
-              print("::warning::YouTube did not accept the cover; see the release record")
-          PY
-              exit 0
-            fi
-            sleep 10
-          done
-          exit 1
       - uses: actions/upload-artifact@v4
-        if: always() && steps.selection.outputs.date != ''
+        if: always()
         with:
-          name: long-release-${{ github.run_number }}
+          name: long-vosK-dry-run
           path: |
-            output/long-release/draft/*/dossier.json
-            output/long-release/sources.json
+            output/long-release/pilot.mp4
             output/long-release/thumbnail.jpg
-            output/long-release/delivery.json
-            output/long-release/upload_result.json
-          if-no-files-found: ignore
-
+            output/long-release/tts.json
+            output/long-release/sources.json
+            output/long-release/draft/*/dossier.json
