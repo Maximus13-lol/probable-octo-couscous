@@ -65,10 +65,17 @@ jobs:
         with:
           path: output/long-release/draft/${{ steps.selection.outputs.date }}
           key: long-draft-v1-${{ steps.selection.outputs.date }}
+      - name: Кэш резервного Z-Image Turbo
+        if: steps.selection.outputs.date != ''
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/shorts-zimage
+          key: zimage-cpu-52491bd-${{ runner.os }}-${{ runner.arch }}
       - name: Собрать видео локальным голосом Vosk
         if: steps.selection.outputs.date != ''
         env:
           POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
+          ZIMAGE_FALLBACK: 'true'
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg fonts-dejavu-core
