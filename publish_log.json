@@ -761,5 +761,25 @@
     "manual": true,
     "publish_at": null,
     "slot_date": "2026-11-25"
+  },
+  {
+    "date": "2026-11-25",
+    "run_id": "20261125_191049",
+    "video_id": "RFLVzu9mjWc",
+    "url": "https://youtube.com/shorts/RFLVzu9mjWc",
+    "title": "Дело №9: Секрет движущихся камней Долины Смерти #Shorts",
+    "topic": "Почему камни оставляют длинные следы на высохшем озере Рейстрек-Плайя в Долине Смерти",
+    "source": "manual",
+    "privacy": "public",
+    "ad_campaign": null,
+    "slot": null,
+    "cta_voice": null,
+    "thumbnail": "ok",
+    "rubric": "ТАЙНА",
+    "case": 9,
+    "question": "Как вы думаете, какой вес самого тяжелого камня сдвинулся с места?",
+    "manual": true,
+    "publish_at": null,
+    "slot_date": "2026-11-25"
   }
 ]
