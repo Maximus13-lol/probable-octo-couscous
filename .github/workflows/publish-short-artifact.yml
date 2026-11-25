@@ -7,6 +7,11 @@ on:
         required: true
         type: string
 
+      approve_visual_qa:
+        description: "Ручное одобрение ролика с замечанием редактора по кадру"
+        type: boolean
+        default: false
+
 permissions:
   actions: read
   contents: write
@@ -43,13 +48,19 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: python -m pip install 'Pillow>=10,<12' google-api-python-client google-auth
+      - run: python -m pip install 'Pillow>=10,<12' google-api-python-client google-auth numpy requests
       - name: Publish existing MP4
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
-        run: python -m src.publish_short_artifact recovered
+          APPROVE_VISUAL_QA: ${{ inputs.approve_visual_qa }}
+        run: |
+          if [[ "$APPROVE_VISUAL_QA" == true ]]; then
+            python -m src.publish_short_artifact recovered --approve-visual-qa
+          else
+            python -m src.publish_short_artifact recovered
+          fi
       - name: Save publication log
         if: always() && steps.source.outcome == 'success'
         run: |

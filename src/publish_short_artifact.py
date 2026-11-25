@@ -1,22 +1,34 @@
 """Publish a finished Short that missed its publication window."""
 from __future__ import annotations
 
+import argparse
 import datetime as dt
-import sys
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from . import cover, upload
+from . import ads, archive, cover, upload
 from .utils import load_json, log, setup_logging
 
 
-def publish(root: Path) -> None:
+def publish(root: Path, *, approve_visual_qa: bool = False) -> None:
     (video,) = root.rglob("final.mp4")
     folder = video.parent
     summary = load_json(folder / "summary.json")
-    if summary.get("error") != "RuntimeError: Окно публикации Shorts закрыто" or summary.get("upload"):
-        raise RuntimeError("Артефакт должен содержать готовый ролик, пропустивший окно публикации")
-    meta = load_json(folder / "metadata.json")
+    error = summary.get("error", "")
+    missed_window = error == "RuntimeError: Окно публикации Shorts закрыто"
+    approved = approve_visual_qa and error.startswith(
+        "QAError: ролик не прошёл контроль качества: редактор: кадр "
+    ) and len(error.split("; ")) == 1
+    if summary.get("upload") or summary.get("no_upload") or summary.get("test_ad") or not (missed_window or approved):
+        raise RuntimeError("Артефакт не подходит для ручной публикации")
+    story = load_json(folder / "story.json", default={}) or {}
+    ad_info = load_json(folder / "ad_info.json", default=None)
+    meta = load_json(folder / "metadata.json", default=None)
+    if approved:
+        photo_credits = archive.credits(load_json(folder / "archive_photos.json", default=[]))
+        story = {**story, "case": summary.get("case"), "photo_credits": photo_credits}
+        assembly = load_json(folder / "assembly.json")
+        meta = upload.build_metadata(story, ad_info, assembly.get("music_credit"))
     if meta.get("privacy_status") != "public":
         raise RuntimeError("В артефакте отсутствуют настройки публичного ролика")
     run_id = summary["run_id"]
@@ -26,13 +38,12 @@ def publish(root: Path) -> None:
             return
 
     meta["publish_at"] = None
-    story = load_json(folder / "story.json", default={}) or {}
     result = upload.upload(video, meta, folder)
     today = dt.datetime.now(ZoneInfo("Europe/Moscow")).date().isoformat()
     entry = {
         "date": today, "run_id": run_id, "video_id": result["video_id"],
-        "url": result["url"], "title": meta["title"], "topic": summary["topic"],
-        "privacy": result["privacy"], "ad_campaign": summary.get("ad"),
+        "url": result["url"], "title": meta["title"], "topic": summary.get("topic") or story["title"],
+        "privacy": result["privacy"], "ad_campaign": (ad_info or {}).get("campaign"),
         "slot": None, "rubric": summary.get("rubric"), "case": summary.get("case"),
         "question": story.get("question"), "manual": True, "publish_at": None,
         "slot_date": today,
@@ -40,6 +51,8 @@ def publish(root: Path) -> None:
     upload.append_publish_log(entry)
     if result["privacy"] != "public":
         raise RuntimeError(f"YouTube вернул статус {result['privacy']} для {result['url']}")
+    if ad_info:
+        ads.log_impression(ad_info, result["url"], meta["title"])
     thumbnail = folder / "cover.jpg"
     if thumbnail.is_file():
         log.info("Обложка: %s", cover.set_thumbnail(result["video_id"], thumbnail, wait_for_short=True))
@@ -47,4 +60,8 @@ def publish(root: Path) -> None:
 
 if __name__ == "__main__":
     setup_logging()
-    publish(Path(sys.argv[1]))
+    parser = argparse.ArgumentParser()
+    parser.add_argument("root", type=Path)
+    parser.add_argument("--approve-visual-qa", action="store_true")
+    args = parser.parse_args()
+    publish(args.root, approve_visual_qa=args.approve_visual_qa)
