@@ -1,0 +1,83 @@
+name: Benchmark Z-Image on three Shorts scenes
+on:
+  push:
+    branches: [test/zimage-shorts-benchmark]
+    paths: [.github/workflows/zimage-benchmark.yml]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  benchmark:
+    runs-on: ubuntu-26.04
+    timeout-minutes: 120
+    env:
+      SOURCE_RUN: '45682360240'
+    steps:
+      - name: Extract real Shorts prompts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$SOURCE_RUN" --repo "$GITHUB_REPOSITORY" --name short-179 --dir source
+          mkdir -p benchmark
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          board = next(Path("source").rglob("storyboard.json"))
+          scenes = json.loads(board.read_text())["scenes"]
+          unique = list(dict.fromkeys(s.get("full_prompt") or s["prompt"] for s in scenes))
+          assert len(unique) >= 3
+          picks = [unique[i] for i in (0, len(unique)//2, len(unique)-1)]
+          Path("benchmark/prompts.json").write_text(json.dumps(picks, ensure_ascii=False, indent=2))
+          PY
+          rm -rf source
+      - name: Download pinned CPU engine and weights
+        run: |
+          mkdir -p engine weights
+          curl -fLsS --retry 3 'https://github.com/leejet/stable-diffusion.cpp/releases/download/master-1133-52491bd/sd-master-52491bd-bin-Linux-Ubuntu-26.04-x86_64.zip' -o engine.zip
+          unzip -q engine.zip -d engine
+          curl -fLsS --retry 3 'https://huggingface.co/leejet/Z-Image-Turbo-GGUF/resolve/c61c0e422dc8b541b7548cf33a4ef8302b0f8085/z_image_turbo-Q3_K.gguf' -o weights/zimage.gguf
+          curl -fLsS --retry 3 'https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf' -o weights/encoder.gguf
+          curl -fLsS --retry 3 'https://huggingface.co/Comfy-Org/z_image_turbo/resolve/6fc90a3b1b653e935a0d175e260736de25b84df5/split_files/vae/ae.safetensors' -o weights/vae.safetensors
+      - name: Render three 432 × 768 images and record timings
+        run: |
+          cli=$(find "$PWD/engine" -type f -name sd-cli -print -quit)
+          test -n "$cli"
+          chmod +x "$cli"
+          export SD_CLI="$cli"
+          export LD_LIBRARY_PATH="$(dirname "$cli"):${LD_LIBRARY_PATH:-}"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import struct
+          import subprocess
+          import time
+          out = Path("benchmark")
+          prompts = json.loads((out / "prompts.json").read_text())
+          timings = []
+          for index, prompt in enumerate(prompts, 1):
+              image = out / f"scene-{index}.png"
+              start = time.monotonic()
+              subprocess.run([
+                  os.environ["SD_CLI"], "--diffusion-model", "weights/zimage.gguf",
+                  "--llm", "weights/encoder.gguf", "--vae", "weights/vae.safetensors",
+                  "--backend", "cpu", "--cfg-scale", "1.0", "--diffusion-fa",
+                  "-W", "432", "-H", "768", "--steps", "8", "--seed", str(100 + index),
+                  "-p", prompt, "-o", str(image),
+              ], check=True, timeout=1800)
+              header = image.read_bytes()[:24]
+              assert header.startswith(b"\x89PNG\r\n\x1a\n")
+              assert struct.unpack(">II", header[16:24]) == (432, 768)
+              seconds = round(time.monotonic() - start, 2)
+              timings.append({"scene": index, "seconds": seconds})
+              print(f"Scene {index}: {seconds:.2f} seconds", flush=True)
+              (out / "timings.json").write_text(json.dumps(timings, indent=2))
+          with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as report:
+              for item in timings:
+                  print(f"- Scene {item['scene']}: {item['seconds']} s", file=report)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zimage-shorts-vertical
+          path: benchmark/
