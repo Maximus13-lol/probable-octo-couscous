@@ -190,7 +190,16 @@ def run(args) -> int:
         summary["voice"] = voice[0]["voice"] if voice else None
         summary.update({"rubric": st.get("rubric"), "sources": st.get("sources"), "topic": choice["topic"], "title": meta["title"], "video": str(final),
                         "duration": asm.get("duration"), "ad": ad_info and ad_info["campaign"]})
-        if args.no_upload or args.test_ad:
+        if args.defer_publish:
+            save_json(run_dir / "release.json", {
+                "run_id": run_id, "title": meta["title"], "topic": choice["topic"],
+                "source": choice.get("source"), "ad_campaign": summary["ad"],
+                "slot": os.environ["SLOT"], "slot_date": os.environ["SLOT_DATE"],
+                "rubric": st.get("rubric"), "case": st.get("case"), "question": st.get("question"),
+                "cta_voice": (cta_audio or {}).get("source"), "manual": False,
+            })
+            log.info("Ролик прошёл контроль качества и готов к резервированию: %s", final)
+        elif args.no_upload or args.test_ad:
             log.info("Загрузка пропущена (%s). Видео: %s", "--test-ad" if args.test_ad else "--no-upload", final)
         else:
             meta["publish_at"] = os.environ.get("PUBLISH_AT") or None
@@ -244,6 +253,7 @@ def run(args) -> int:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="python -m src.main", description="Автоматический конвейер YouTube Shorts")
+    p.add_argument("--defer-publish", action="store_true", help="сохранить проверенный ролик для отдельного шага публикации")
     p.add_argument("--no-upload", action="store_true", help="не загружать на YouTube")
     p.add_argument("--test-ad", action="store_true", help="вставить тестовую рекламу (подразумевает --no-upload)")
     p.add_argument("--ad-campaign", help="принудительно использовать кампанию с этим id")
@@ -252,6 +262,8 @@ def main(argv=None) -> int:
     p.add_argument("--mark-used", action="store_true", help="записать тему в used_topics.json даже при --no-upload")
     p.add_argument("-v", "--verbose", action="store_true")
     args = p.parse_args(argv)
+    if args.defer_publish and (args.no_upload or args.test_ad or not all(os.environ.get(k) for k in ("SLOT", "SLOT_DATE"))):
+        p.error("--defer-publish требует слот и включённую публикацию")
     if args.test_ad:
         args.no_upload = True
     setup_logging(10 if args.verbose else 20)

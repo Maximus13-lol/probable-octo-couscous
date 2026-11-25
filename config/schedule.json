@@ -1,6 +1,7 @@
 {
   "timezone": "Europe/Moscow",
   "lead_minutes": 230,
+  "retry_from": "2026-11-26",
   "phases": [
     {
       "slots": [

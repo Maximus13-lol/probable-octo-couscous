@@ -2,8 +2,8 @@ name: Daily YouTube Short
 
 on:
   schedule:
-    # Утренняя и вечерняя сборка с резервными запусками (UTC).
-    - cron: "7,37 1-5,11-15,17-20 * * *"
+    # Повторяем незакрытые слоты и после окна публикации, в том числе на следующий день (UTC).
+    - cron: "7,37 * * * *"
   workflow_dispatch:
     inputs:
       no_upload:
@@ -36,6 +36,7 @@ on:
         required: false
 
 permissions:
+  actions: read    # скачать резервную копию предыдущего запуска
   contents: write   # чтобы сохранить used_topics.json, publish_log.json, ads/log.json, inbox/
   issues: write     # режим «живой голос»: уведомление о новом сценарии для начитки
 
@@ -78,15 +79,46 @@ jobs:
             bash tools/save_state.sh "chore: комментарии под роликами [skip ci]"
           fi
 
+      - name: Найти резервную копию слота
+        if: steps.guard.outputs.run == 'true' && env.PUBLISH == 'true' && inputs.pilot != true && steps.guard.outputs.slot != ''
+        id: reserve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT: short-release-${{ steps.guard.outputs.slot_date }}-${{ steps.guard.outputs.slot }}
+        run: |
+          name="${ARTIFACT//:/-}"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          artifact_run() {
+            gh api -X GET "repos/$GITHUB_REPOSITORY/actions/artifacts" -f name="$1" --jq '
+              [.artifacts[] | select(.expired == false and .workflow_run.head_branch == "main")]
+              | sort_by(.id) | last | .workflow_run.id // empty'
+          }
+          source=$(artifact_run "$name")
+          if [[ -n "$source" ]]; then
+            valid=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$source" --jq '.path == ".github/workflows/daily.yml"')
+            [[ "$valid" == true ]]
+            gh run download "$source" -n "$name" -D output
+            echo "restored=true" >> "$GITHUB_OUTPUT"
+            receipt=$(artifact_run "$name-receipt")
+            if [[ -n "$receipt" ]]; then
+              valid=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$receipt" --jq '.path == ".github/workflows/daily.yml"')
+              [[ "$valid" == true ]]
+              gh run download "$receipt" -n "$name-receipt" -D .short-receipt
+              manifest=$(find output -name release.json -type f)
+              response=$(find .short-receipt -name upload_result.json -type f)
+              cp "$response" "$(dirname "$manifest")/upload_result.json"
+            fi
+          fi
+
       - name: Кэш FFmpeg
-        if: steps.guard.outputs.run == 'true'
+        if: steps.guard.outputs.run == 'true' && steps.reserve.outputs.restored != 'true'
         uses: actions/cache@v4
         with:
           path: ~/ffmpeg-static
           key: ffmpeg-static-btbn-v1
 
       - name: FFmpeg (статическая сборка, без apt)
-        if: steps.guard.outputs.run == 'true'
+        if: steps.guard.outputs.run == 'true' && steps.reserve.outputs.restored != 'true'
         timeout-minutes: 10
         run: |
           # apt-зеркала на раннерах GitHub 11.11.2026 зависали на 30+ минут — ставим FFmpeg без apt.
@@ -111,12 +143,12 @@ jobs:
           fi
 
       - name: Python-зависимости
-        if: steps.guard.outputs.run == 'true'
+        if: steps.guard.outputs.run == 'true' && steps.reserve.outputs.restored != 'true'
         timeout-minutes: 15
         run: pip install --retries 5 --timeout 60 -r requirements.txt
 
       - name: Кэш моделей RUAccent, faster-whisper и Vosk (скачиваются один раз)
-        if: steps.guard.outputs.run == 'true'
+        if: steps.guard.outputs.run == 'true' && steps.reserve.outputs.restored != 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -127,7 +159,7 @@ jobs:
 
       - name: Голос автора — образец (расшифровка)
         id: voice
-        if: steps.guard.outputs.run == 'true'
+        if: steps.guard.outputs.run == 'true' && steps.reserve.outputs.restored != 'true'
         env:
           VOICE_KEY: ${{ secrets.VOICE_KEY }}
         run: |
@@ -157,7 +189,7 @@ jobs:
             && echo "QWEN_PY=$HOME/qwen-venv/bin/python" >> "$GITHUB_ENV" || echo "::warning::Qwen3-TTS недоступен"
 
       - name: Конвейер
-        if: steps.guard.outputs.run == 'true'
+        if: steps.guard.outputs.run == 'true' && steps.reserve.outputs.restored != 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           # запасной поставщик текстов, если Gemini перегружен (бесплатные модели OpenRouter)
@@ -171,6 +203,7 @@ jobs:
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
           POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
           TOPIC: ${{ inputs.topic }}
+          RESERVE: ${{ steps.reserve.outputs.name }}
           PILOT: ${{ inputs.pilot }}
           RUBRIC: ${{ inputs.rubric }}
           PRIVACY_OVERRIDE: ${{ inputs.pilot == true && 'unlisted' || '' }}
@@ -180,6 +213,7 @@ jobs:
           PUBLISH_AT: ${{ steps.guard.outputs.publish_at }}
         run: |
           ARGS=""
+          if [[ -n "$RESERVE" ]]; then ARGS="$ARGS --defer-publish"; fi
           if [ "$PUBLISH" != "true" ]; then ARGS="$ARGS --no-upload"; fi
           if [ "${{ inputs.test_ad }}" = "true" ]; then ARGS="$ARGS --test-ad"; fi
           if [ "${{ inputs.allow_voice_fallback }}" = "true" ]; then ARGS="$ARGS --allow-voice-fallback"; fi
@@ -188,6 +222,44 @@ jobs:
           else
             python -m src.main $ARGS
           fi
+
+      - name: Зарезервировать готовый выпуск перед загрузкой
+        if: steps.reserve.outputs.name != '' && steps.reserve.outputs.restored != 'true' && hashFiles('output/*/release.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.reserve.outputs.name }}
+          path: |
+            output/*/release.json
+            output/*/metadata.json
+            output/*/final.mp4
+            output/*/cover.jpg
+            output/*/ad_info.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Установить зависимости для восстановления публикации
+        if: steps.reserve.outputs.restored == 'true'
+        run: pip install --retries 3 'Pillow>=10,<12' numpy google-api-python-client google-auth
+
+      - name: Опубликовать зарезервированный выпуск
+        if: steps.reserve.outputs.name != '' && hashFiles('output/*/release.json') != ''
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+          SLOT: ${{ steps.guard.outputs.slot }}
+          SLOT_DATE: ${{ steps.guard.outputs.slot_date }}
+          PUBLISH_AT: ${{ steps.guard.outputs.publish_at }}
+        run: python -m src.short_release output
+
+      - name: Сохранить ответ YouTube для восстановления журнала
+        if: always() && steps.reserve.outputs.name != '' && hashFiles('output/*/upload_result.json') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.reserve.outputs.name }}-receipt
+          path: |
+            output/*/upload_result.json
+          retention-days: 30
 
       - name: Сохранить состояние (темы, логи публикаций и показов рекламы)
         if: always() && env.PUBLISH == 'true' && steps.guard.outputs.run == 'true'
