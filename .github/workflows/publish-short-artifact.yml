@@ -1,0 +1,55 @@
+name: Publish rendered Short
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "ID запуска Daily YouTube Short с готовым артефактом"
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: daily-short
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify source run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.run_id }}
+        run: |
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]]
+          run=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$SOURCE_RUN")
+          jq -e --arg repo "$GITHUB_REPOSITORY" '
+            .path == ".github/workflows/daily.yml" and .head_branch == "main"
+            and .head_repository.full_name == $repo and .status == "completed"
+          ' <<< "$run"
+          echo "artifact=short-$(jq -r .run_number <<< "$run")" >> "$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.run_id }}
+          name: ${{ steps.source.outputs.artifact }}
+          path: recovered
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - run: python -m pip install 'Pillow>=10,<12' google-api-python-client google-auth
+      - name: Publish existing MP4
+        env:
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
+        run: python -m src.publish_short_artifact recovered
+      - name: Save publication log
+        if: always() && steps.source.outcome == 'success'
+        run: bash tools/save_state.sh "chore: сохранить восстановленную публикацию Shorts [skip ci]"
