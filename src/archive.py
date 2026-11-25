@@ -269,7 +269,14 @@ def render(photo: Image.Image, caption: str) -> Image.Image:
     d.rounded_rectangle(((VIDEO_W - w1) / 2 - 22, 170, (VIDEO_W + w1) / 2 + 22, 228), radius=12, fill=(200, 30, 30))
     d.text((VIDEO_W / 2, 199), label, font=f1, fill="white", anchor="mm")
     if caption:
-        d.text((VIDEO_W / 2, 280), caption, font=_font(44), fill="white", anchor="mm",
+        # Оставляем поля для приближения и смещения кадра при монтаже.
+        caption_font = _font(44)
+        max_width = VIDEO_W * 0.78
+        bounds = d.textbbox((0, 0), caption, font=caption_font, stroke_width=3)
+        while bounds[2] - bounds[0] > max_width and caption_font.size > 1:
+            caption_font = _font(caption_font.size - 1)
+            bounds = d.textbbox((0, 0), caption, font=caption_font, stroke_width=3)
+        d.text((VIDEO_W / 2, 280), caption, font=caption_font, fill="white", anchor="mm",
                stroke_width=3, stroke_fill="black")
     return bg
 
