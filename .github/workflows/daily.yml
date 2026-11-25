@@ -159,12 +159,14 @@ jobs:
       - name: Конвейер
         if: steps.guard.outputs.run == 'true'
         env:
-          # Только бесплатные модели OpenRouter
+          # OpenRouter использует только модели :free
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
           YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
           YT_API_KEY: ${{ secrets.YT_API_KEY }}
+          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
           TOPIC: ${{ inputs.topic }}
           PILOT: ${{ inputs.pilot }}
           RUBRIC: ${{ inputs.rubric }}

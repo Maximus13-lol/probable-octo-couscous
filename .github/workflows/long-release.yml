@@ -55,6 +55,7 @@ jobs:
       - name: Подготовить сценарий и архивные кадры
         if: steps.selection.outputs.date != ''
         env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
         run: |
           python -m pip install --retries 5 requests
@@ -66,6 +67,8 @@ jobs:
           key: long-draft-v1-${{ steps.selection.outputs.date }}
       - name: Собрать видео локальным голосом Vosk
         if: steps.selection.outputs.date != ''
+        env:
+          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg fonts-dejavu-core
