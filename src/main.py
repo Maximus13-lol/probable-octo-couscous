@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 from . import ads, archive, qa, assemble, cover, cta, formats, human_voice, images, quality, narration, story, storyboard, trends, tts, uniqueness, upload
 from .gemini import available as gemini_ok
-from .utils import OUTPUT_DIR, load_json, log, save_json, setup_logging
+from .utils import OUTPUT_DIR, load_json, log, retry_generation, save_json, setup_logging
 
 
 def step(n: int, name: str) -> float:
@@ -51,7 +51,7 @@ def make_script(args, run_dir, summary, done):
         done("trend-scout", t)
 
         t = step(2, "story-writer")
-        st = story.write_story(choice, run_dir)
+        st = retry_generation(story.write_story, choice, run_dir)
         done("story-writer", t)
         bad = None if args.topic else quality.unsafe_topic(f"{choice['topic']} {st.get('title', '')} {st['story']}")
         if bad:
@@ -77,13 +77,13 @@ def make_script(args, run_dir, summary, done):
     done("story-writer", t)
 
     t = step(3, "storyboard")
-    board = storyboard.make_storyboard(st, choice.get("topic_en", choice["topic"]), run_dir)
+    board = retry_generation(storyboard.make_storyboard, st, choice.get("topic_en", choice["topic"]), run_dir)
     done("storyboard", t)
 
     t = step(4, "narration-director (ударения, паузы, SSML)")
     voice_cfg = narration.voice_config()
     styles = tts.voice_styles(voice_cfg["voice"]) if tts.azure_available() else []
-    narr = narration.direct(board, run_dir, voice_cfg["voice"], styles)
+    narr = retry_generation(narration.direct, board, run_dir, voice_cfg["voice"], styles)
     done("narration", t)
 
     return choice, st, board, narr
@@ -143,14 +143,14 @@ def run(args) -> int:
                                                    max(1, len(board["scenes"]) // 2)))
             st["photo_credits"] = archive.credits(used_photos)
             summary["archive_photos"] = len(used_photos)
-        imgs = images.generate_images(board, run_dir)
+        imgs = retry_generation(images.generate_images, board, run_dir)
         save_json(run_dir / "storyboard.json", board)  # + полные промпты
         done("images", t)
 
         t = step(6, "озвучка (Vosk / Gemini TTS / Azure)")
         author_required = not args.no_upload and not args.test_ad
         voice = (human_voice.voice_from_recording(rec, narr, run_dir) if rec
-                 else tts.synthesize(narr, run_dir, allow_silent=args.no_upload, author_only=author_required,
+                 else retry_generation(tts.synthesize, narr, run_dir, allow_silent=args.no_upload, author_only=author_required,
                                      allow_voice_fallback=args.allow_voice_fallback))
         cta_cfg = cta.config()
         cta_audio = None
