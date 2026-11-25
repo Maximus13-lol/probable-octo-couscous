@@ -744,5 +744,22 @@
     "manual": true,
     "publish_at": null,
     "slot_date": "2026-11-25"
+  },
+  {
+    "date": "2026-11-25",
+    "run_id": "20261125_125333",
+    "video_id": "WWVjaPvIShM",
+    "url": "https://youtube.com/shorts/WWVjaPvIShM",
+    "title": "Дело №8: Тайна Кодекса Рохота #Shorts",
+    "topic": "Тайна Кодекса Рохота",
+    "privacy": "public",
+    "ad_campaign": null,
+    "slot": null,
+    "rubric": null,
+    "case": 8,
+    "question": "Как вы думаете, является ли эта рукопись сложнейшим шифром или искусной подделкой?",
+    "manual": true,
+    "publish_at": null,
+    "slot_date": "2026-11-25"
   }
 ]
