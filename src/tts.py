@@ -648,9 +648,14 @@ def providers() -> list[str]:
 
 
 def synthesize(narr: list[dict], run_dir: Path, allow_silent: bool = False, *,
-               author_only: bool = False, allow_voice_fallback: bool = False) -> list[dict]:
+               author_only: bool = False, allow_voice_fallback: bool = False, vosk_only: bool = False) -> list[dict]:
     adir = run_dir / "audio"
     adir.mkdir(parents=True, exist_ok=True)
+    if vosk_only:
+        log.info("Озвучка: локальный Vosk")
+        result = _synth_vosk(narr, adir)
+        save_json(run_dir / "tts.json", result)
+        return result
     if author_only and not allow_voice_fallback and not qwen_available():
         raise TtsFatal("Недоступна озвучка голосом автора")
     if author_only:
