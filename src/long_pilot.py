@@ -200,7 +200,7 @@ def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
         chapters = narration_scenes(chapters)
         resolve_illustrations(chapters, output)
         board = {"scenes": [{"index": scene["index"], "text": scene["text"]} for scene in chapters]}
-        voices = tts.synthesize(narration.direct(board, output), output, author_only=True)
+        voices = tts.synthesize(narration.direct(board, output), output, vosk_only=True)
     speech_tempo = [] if smoke else ["-af", "atempo=1.06"]
     intro = render_intro(output)
     clips = [intro.name] if intro else []
