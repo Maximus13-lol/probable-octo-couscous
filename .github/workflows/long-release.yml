@@ -1,4 +1,4 @@
-name: Upload rendered long video for review
+name: Upload rendered evening Short for review
 on:
   workflow_dispatch:
 
@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: long-review-45813730177
+  group: short-review-45859613054
   cancel-in-progress: false
 
 jobs:
@@ -21,13 +21,13 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: 45813730177
-          name: long-vosK-dry-run
+          run-id: 45859613054
+          name: short-184
           path: rendered
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - run: python -m pip install 'Pillow>=10,<12' google-api-python-client google-auth
+      - run: python -m pip install 'Pillow>=10,<12' google-api-python-client google-auth numpy
       - name: Upload with link-only visibility
         env:
           YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
@@ -35,36 +35,22 @@ jobs:
           YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: |
           python - <<'PY'
-          import json
           import time
           from pathlib import Path
 
-          from src import cover, upload
-          from src.utils import setup_logging
+          from src import upload
+          from src.utils import load_json, setup_logging
 
           setup_logging()
-          (video,) = Path("rendered").rglob("pilot.mp4")
-          (dossier_path,) = Path("rendered").rglob("dossier.json")
-          dossier = json.loads(dossier_path.read_text(encoding="utf-8"))
-          source_path = video.with_name("sources.json")
-          credits = {}
-          for source in json.loads(source_path.read_text(encoding="utf-8")):
-              url = source["source_url"]
-              credits[url] = f"{source['credit']} · {source['license']} · {url}"
-          sources = [*dossier.get("references", {}).values(), *credits.values()]
-          description = "Папка №13 · Документальный разбор\n\nИсточники и архивные материалы\n" + "\n".join(sources)
-          meta = {
-              "title": dossier["title"][:100],
-              "description": description.replace("<", "‹").replace(">", "›"),
-              "tags": ["история", "трукрайм", "Папка №13"],
-              "category_id": "27",
-              "language": "ru",
-              "made_for_kids": False,
-              "privacy_status": "unlisted",
-              "notify_subscribers": False,
-              "contains_synthetic_media": True,
-              "paid_promotion": False,
-          }
+          (video,) = Path("rendered").rglob("final.mp4")
+          assert video.parent.name == "20261126_163430"
+          summary = load_json(video.with_name("summary.json"))
+          story = load_json(video.with_name("story.json"))
+          story["case"] = summary.get("case")
+          assembly = load_json(video.with_name("assembly.json"))
+          ad_info = load_json(video.with_name("ad_info.json"), default=None)
+          meta = upload.build_metadata(story, ad_info, assembly.get("music_credit"))
+          meta.update(privacy_status="unlisted", notify_subscribers=False)
           result = upload.upload(video, meta, video.parent)
           video_id = result["video_id"]
           client = upload.get_youtube_client()
@@ -78,7 +64,5 @@ jobs:
               time.sleep(10)
           if status.get("uploadStatus") in {"failed", "rejected", "deleted"}:
               raise RuntimeError(f"YouTube отклонил видео: {status}")
-          print(f"Подтверждён доступ по ссылке: https://www.youtube.com/watch?v={video_id}", flush=True)
-          if status.get("uploadStatus") == "processed":
-              print(f"Обложка: {cover.set_thumbnail(video_id, video.with_name('thumbnail.jpg'))}", flush=True)
+          print(f"Подтверждён доступ по ссылке: https://youtube.com/shorts/{video_id}", flush=True)
           PY
