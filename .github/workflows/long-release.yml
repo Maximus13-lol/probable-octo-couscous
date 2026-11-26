@@ -15,17 +15,17 @@ jobs:
       - name: Select test date
         id: selection
         run: |
-          date=$(TZ=Europe/Moscow date +%F)
+          date=2026-11-27
           printf '{"date":"%s","publish_at":null}\n' "$date" > "$RUNNER_TEMP/episode.json"
           echo "date=$date" >> "$GITHUB_OUTPUT"
-      - name: Подготовить сценарий и архивные кадры
-        if: steps.selection.outputs.date != ''
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-        run: |
-          python -m pip install --retries 5 requests "Pillow>=10,<12"
-          python -m src.long_release prepare "$RUNNER_TEMP/episode.json"
+      - name: Восстановить проверенное досье
+        uses: actions/cache/restore@v4
+        with:
+          path: output/long-release/draft/${{ steps.selection.outputs.date }}
+          key: long-draft-v1-${{ steps.selection.outputs.date }}
+          fail-on-cache-miss: true
+      - name: Проверить наличие досье
+        run: test -s "output/long-release/draft/${{ steps.selection.outputs.date }}/dossier.json"
       - name: Собрать видео локальным голосом Vosk
         if: steps.selection.outputs.date != ''
         env:
