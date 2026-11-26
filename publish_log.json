@@ -781,5 +781,25 @@
     "manual": true,
     "publish_at": null,
     "slot_date": "2026-11-25"
+  },
+  {
+    "date": "2026-11-26",
+    "run_id": "20261126_030141",
+    "video_id": "KSP6r22e85Y",
+    "url": "https://youtube.com/shorts/KSP6r22e85Y",
+    "title": "26 ноября: Тайна входа в гробницу Тутанхамона #Shorts",
+    "topic": "Проклятие фараонов: тайна входа в гробницу Тутанхамона",
+    "source": "onthisday",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "08:00-09:30",
+    "cta_voice": null,
+    "thumbnail": "ok",
+    "rubric": "ЭТОТ ДЕНЬ · 26 НОЯБРЯ",
+    "case": null,
+    "question": "Как вы думаете, почему грабители не смогли полностью разграбить эту гробницу?",
+    "manual": false,
+    "publish_at": "2026-11-26T05:55:00Z",
+    "slot_date": "2026-11-26"
   }
 ]
