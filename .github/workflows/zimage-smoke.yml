@@ -1,0 +1,42 @@
+name: Test Z-Image fallback without publication
+on:
+  push:
+    branches: [fix/zimage-image-fallback]
+    paths: [.github/workflows/zimage-smoke.yml]
+permissions:
+  actions: read
+  contents: read
+jobs:
+  fallback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Render a real Shorts scene after a simulated Pollinations rejection
+        env:
+          GH_TOKEN: ${{ github.token }}
+          POLLINATIONS_TOKEN: simulated-test-key
+          ZIMAGE_FALLBACK: 'true'
+        run: |
+          gh run download 45682360240 --repo "$GITHUB_REPOSITORY" --name short-179 --dir source
+          python -m pip install Pillow requests numpy
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from unittest.mock import patch
+          from src import images
+          board = json.loads(next(Path("source").rglob("storyboard.json")).read_text())
+          board["scenes"] = board["scenes"][:1]
+          with patch.object(images, "_download_gen", side_effect=PermissionError("simulated HTTP 402")) as pollinations, patch.object(images, "_download_legacy", side_effect=AssertionError("Z-Image fallback did not return a frame")):
+              paths = images.generate_images(board, Path("test-output"))
+              assert pollinations.call_count == 1
+          assert len(paths) == 1 and paths[0].stat().st_size > 10000
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: zimage-fallback-frame
+          path: test-output/images/

@@ -2,11 +2,13 @@
 
 С ключом (секрет POLLINATIONS_TOKEN, ключ sk_… с enter.pollinations.ai) — новый API gen.pollinations.ai
 и модель получше (POLLINATIONS_KEY_MODEL, по умолчанию zimage — Z-Image Turbo), без очереди анонимного тарифа.
-Если ключа нет, баланс pollen кончился или новый API недоступен — старый бесплатный image.pollinations.ai."""
+При отказе нового API используем Z-Image на CPU, если он включён, затем старый image.pollinations.ai."""
 from __future__ import annotations
 
 import io
 import re
+import subprocess
+import tempfile
 import time
 import urllib.parse
 from pathlib import Path
@@ -43,11 +45,33 @@ def _download_gen(prompt: str, seed: int, token: str) -> Image.Image:
                      headers={"Authorization": f"Bearer {token}", "User-Agent": "shorts-pipeline/1.0"})
     if r.status_code in (401, 402, 403):
         _GEN_OFF = True
-        log.warning("Pollinations (ключ): HTTP %s — %s. Дальше бесплатный тариф.", r.status_code, r.text[:200])
+        log.warning("Pollinations (ключ): HTTP %s — %s. Переключаю генератор.", r.status_code, r.text[:200])
         raise PermissionError("pollinations key rejected")
     if r.status_code != 200:
         raise ImageError(f"HTTP {r.status_code}: {r.text[:200]}")
     return _as_image(r)
+
+
+def _download_zimage(prompt: str, seed: int) -> Image.Image:
+    cache = Path(env("ZIMAGE_CACHE", str(Path.home() / ".cache" / "shorts-zimage")))
+    cli = cache / "bin" / "sd-cli"
+    if not (cache / ".ready").is_file():
+        setup = Path(__file__).resolve().parents[1] / "tools" / "setup_zimage.sh"
+        subprocess.run(["bash", str(setup), str(cache)], check=True, timeout=1200)
+    with tempfile.TemporaryDirectory(prefix="shorts-zimage-") as folder:
+        output = Path(folder) / "frame.png"
+        start = time.monotonic()
+        subprocess.run([
+            str(cli), "--diffusion-model", str(cache / "zimage.gguf"),
+            "--llm", str(cache / "encoder.gguf"), "--vae", str(cache / "vae.safetensors"),
+            "--backend", "cpu", "--diffusion-fa", "--cfg-scale", "1.0", "--steps", "8",
+            "-W", "432", "-H", "768", "--seed", str(seed), "-p", prompt, "-o", str(output),
+        ], check=True, timeout=600)
+        with Image.open(output) as image:
+            if image.size != (432, 768) or image.getbbox() is None:
+                raise ImageError("Z-Image вернул пустой кадр или неверное разрешение")
+            log.info("Z-Image Turbo CPU: кадр за %.1f с", time.monotonic() - start)
+            return image.convert("RGB")
 
 
 def _download(prompt: str, seed: int) -> Image.Image:
@@ -56,7 +80,12 @@ def _download(prompt: str, seed: int) -> Image.Image:
         try:
             return _download_gen(prompt, seed, token)
         except Exception as exc:  # noqa: BLE001
-            log.warning("Pollinations (ключ) не дал картинку (%s) — пробую бесплатный тариф", str(exc)[:120])
+            log.warning("Pollinations (ключ) не дал картинку (%s) — переключаю генератор", str(exc)[:120])
+    if env("ZIMAGE_FALLBACK") == "true":
+        try:
+            return _download_zimage(prompt, seed)
+        except (OSError, subprocess.SubprocessError, ImageError) as exc:
+            log.warning("Резерв Z-Image недоступен (%s) — пробую анонимный Pollinations", exc)
     return _download_legacy(prompt, seed)
 
 
