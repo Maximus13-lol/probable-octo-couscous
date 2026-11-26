@@ -129,7 +129,7 @@ def render_intro(output: Path) -> Path | None:
     ffmpeg("-i", str(source), "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo", "-t", "4",
            "-vf", "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=25",
            "-map", "0:v:0", "-map", "1:a:0", "-c:v", "libx264", "-pix_fmt", "yuv420p",
-           *speech_tempo, "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(clip))
+           "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(clip))
     return clip
 
 
@@ -217,7 +217,7 @@ def render(dossier: dict, output: Path, *, smoke: bool = False) -> Path:
                "-loop", "1", "-framerate", "25", "-i", str(frame), "-i", voice["path"],
                "-filter_complex", motion, "-map", "[v]", "-map", "2:a:0", "-c:v", "libx264",
                "-preset", "fast", "-pix_fmt", "yuv420p",
-               "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(clip))
+               *speech_tempo, "-c:a", "aac", "-ar", "48000", "-ac", "2", "-shortest", str(clip))
         clips.append(clip.name)
     concat = output / "clips.txt"
     concat.write_text("".join(f"file '{name}'\n" for name in clips), encoding="utf-8")
