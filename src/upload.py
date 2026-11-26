@@ -150,7 +150,7 @@ def upload(video: Path, meta: dict, run_dir: Path) -> dict:
     for with_optional in (True, False):
         body, parts = _body(meta, with_optional)
         media = MediaFileUpload(str(video), mimetype="video/mp4", chunksize=8 * 1024 * 1024, resumable=True)
-        req = yt.videos().insert(part=parts, body=body, media_body=media, notifySubscribers=True)
+        req = yt.videos().insert(part=parts, body=body, media_body=media, notifySubscribers=meta.get("notify_subscribers", True))
         response, attempt = None, 0
         try:
             while response is None:

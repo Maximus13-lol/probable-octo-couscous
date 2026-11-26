@@ -1,50 +1,84 @@
-name: Dry run long episode (no YouTube)
+name: Upload rendered long video for review
 on:
   workflow_dispatch:
+
 permissions:
+  actions: read
   contents: read
+
+concurrency:
+  group: long-review-45813730177
+  cancel-in-progress: false
+
 jobs:
-  render:
+  upload:
     runs-on: ubuntu-latest
-    timeout-minutes: 345
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 45813730177
+          name: long-vosK-dry-run
+          path: rendered
       - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
-      - name: Select test date
-        id: selection
-        run: |
-          date=2026-11-27
-          printf '{"date":"%s","publish_at":null}\n' "$date" > "$RUNNER_TEMP/episode.json"
-          echo "date=$date" >> "$GITHUB_OUTPUT"
-      - name: Восстановить проверенное досье
-        uses: actions/cache/restore@v4
-        with:
-          path: output/long-release/draft/${{ steps.selection.outputs.date }}
-          key: long-draft-v1-${{ steps.selection.outputs.date }}
-          fail-on-cache-miss: true
-      - name: Проверить наличие досье
-        run: test -s "output/long-release/draft/${{ steps.selection.outputs.date }}/dossier.json"
-      - name: Собрать видео локальным голосом Vosk
-        if: steps.selection.outputs.date != ''
+      - run: python -m pip install 'Pillow>=10,<12' google-api-python-client google-auth
+      - name: Upload with link-only visibility
         env:
-          POLLINATIONS_TOKEN: ${{ secrets.POLLINATIONS_TOKEN }}
-          ZIMAGE_FALLBACK: 'true'
+          YT_CLIENT_ID: ${{ secrets.YT_CLIENT_ID }}
+          YT_CLIENT_SECRET: ${{ secrets.YT_CLIENT_SECRET }}
+          YT_REFRESH_TOKEN: ${{ secrets.YT_REFRESH_TOKEN }}
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y ffmpeg fonts-dejavu-core
-          python -m pip install --retries 5 -r requirements.txt
-          python -m src.long_release render "$RUNNER_TEMP/episode.json"
-          duration=$(ffprobe -v error -show_entries format=duration -of csv=p=0 output/long-release/pilot.mp4)
-          python -c 'import sys; d = float(sys.argv[1]); sys.exit(0 if 600 <= d <= 1800 else f"Unexpected runtime: {d:.0f}s")' "$duration"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: long-vosK-dry-run
-          path: |
-            output/long-release/pilot.mp4
-            output/long-release/thumbnail.jpg
-            output/long-release/tts.json
-            output/long-release/sources.json
-            output/long-release/draft/*/dossier.json
+          python - <<'PY'
+          import json
+          import time
+          from pathlib import Path
+
+          from src import cover, upload
+          from src.utils import setup_logging
+
+          setup_logging()
+          (video,) = Path("rendered").rglob("pilot.mp4")
+          (dossier_path,) = Path("rendered").rglob("dossier.json")
+          dossier = json.loads(dossier_path.read_text(encoding="utf-8"))
+          source_path = video.with_name("sources.json")
+          credits = {}
+          for source in json.loads(source_path.read_text(encoding="utf-8")):
+              url = source["source_url"]
+              credits[url] = f"{source['credit']} · {source['license']} · {url}"
+          sources = [*dossier.get("references", {}).values(), *credits.values()]
+          description = "Папка №13 · Документальный разбор\n\nИсточники и архивные материалы\n" + "\n".join(sources)
+          meta = {
+              "title": dossier["title"][:100],
+              "description": description.replace("<", "‹").replace(">", "›"),
+              "tags": ["история", "трукрайм", "Папка №13"],
+              "category_id": "27",
+              "language": "ru",
+              "made_for_kids": False,
+              "privacy_status": "unlisted",
+              "notify_subscribers": False,
+              "contains_synthetic_media": True,
+              "paid_promotion": False,
+          }
+          result = upload.upload(video, meta, video.parent)
+          video_id = result["video_id"]
+          client = upload.get_youtube_client()
+          for _ in range(30):
+              [item] = client.videos().list(part="status", id=video_id).execute()["items"]
+              status = item["status"]
+              if status["privacyStatus"] != "unlisted":
+                  raise RuntimeError("YouTube не подтвердил доступ по ссылке")
+              if status.get("uploadStatus") in {"processed", "failed", "rejected", "deleted"}:
+                  break
+              time.sleep(10)
+          if status.get("uploadStatus") in {"failed", "rejected", "deleted"}:
+              raise RuntimeError(f"YouTube отклонил видео: {status}")
+          print(f"Подтверждён доступ по ссылке: https://www.youtube.com/watch?v={video_id}", flush=True)
+          if status.get("uploadStatus") == "processed":
+              print(f"Обложка: {cover.set_thumbnail(video_id, video.with_name('thumbnail.jpg'))}", flush=True)
+          PY
