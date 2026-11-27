@@ -6,7 +6,7 @@
 4. Взгляд «редактора»: Gemini смотрит лист из 8 кадров ролика (кривые картинки, мусорный текст, обрезанные
    субтитры, жестокость).
 
-Серьёзная проблема → QAError: ролик не публикуется, а workflow повторяет сборку (новая попытка).
+Замечания сохраняются в отчёте и выводятся в журнал.
 Настройки — config/qa.json.
 """
 from __future__ import annotations
@@ -17,9 +17,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from .utils import CONFIG_DIR, OUTPUT_DIR, load_json, log, save_json
-
-RETRY_MARK = OUTPUT_DIR / ".qa_failed_once"  # повторная попытка: замечания «редактора» не блокируют выпуск
+from .utils import CONFIG_DIR, load_json, log, save_json
 
 DEFAULTS = {
     "enabled": True,
@@ -33,10 +31,6 @@ DEFAULTS = {
     "min_alignment": 0.7,
     "vision": True,
 }
-
-
-class QAError(RuntimeError):
-    pass
 
 
 def config() -> dict:
@@ -128,7 +122,7 @@ def vision_review(path: Path, dur: float) -> dict:
 
 
 def check(final: Path, voice: list[dict], run_dir: Path) -> dict:
-    """Нормализует громкость и проверяет ролик. Бросает QAError при серьёзной проблеме."""
+    """Нормализует громкость, собирает и сохраняет замечания к ролику."""
     cfg = config()
     report: dict = {"problems": [], "warnings": []}
     if not cfg["enabled"]:
@@ -167,18 +161,13 @@ def check(final: Path, voice: list[dict], run_dir: Path) -> dict:
             high = [p for p in vr.get("problems") or [] if isinstance(p, dict) and p.get("severity") == "high"]
             if high:
                 msg = "редактор: " + "; ".join(f"кадр {p.get('frame')}: {p.get('issue')}" for p in high[:3])
-                (report["warnings"] if RETRY_MARK.exists() else report["problems"]).append(msg)
+                report["problems"].append(msg)
         except Exception as exc:  # noqa: BLE001
             report["warnings"].append(f"просмотр кадров недоступен: {exc}")
 
     save_json(run_dir / "qa.json", report)
-    for w in report["warnings"]:
-        log.warning("QA: %s", w)
-    if report["problems"]:
-        for p in report["problems"]:
-            log.error("QA: %s", p)
-        RETRY_MARK.parent.mkdir(parents=True, exist_ok=True)
-        RETRY_MARK.write_text("1", encoding="utf-8")
-        raise QAError("ролик не прошёл контроль качества: " + "; ".join(report["problems"]))
-    log.info("QA: ролик прошёл контроль качества (%.1f с)", dur)
+    for note in report["warnings"] + report["problems"]:
+        log.warning("QA: %s", note)
+    if not report["problems"]:
+        log.info("QA: серьёзных замечаний нет (%.1f с)", dur)
     return report

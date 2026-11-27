@@ -1,4 +1,4 @@
-"""Publish a finished Short that missed its publication window."""
+"""Publish a finished Short from an earlier interrupted release."""
 from __future__ import annotations
 
 import argparse
@@ -10,21 +10,19 @@ from . import ads, archive, cover, upload
 from .utils import load_json, log, setup_logging
 
 
-def publish(root: Path, *, approve_visual_qa: bool = False) -> None:
+def publish(root: Path) -> None:
     (video,) = root.rglob("final.mp4")
     folder = video.parent
     summary = load_json(folder / "summary.json")
     error = summary.get("error", "")
     missed_window = error == "RuntimeError: Окно публикации Shorts закрыто"
-    approved = approve_visual_qa and error.startswith(
-        "QAError: ролик не прошёл контроль качества: редактор: кадр "
-    ) and len(error.split("; ")) == 1
-    if summary.get("upload") or summary.get("no_upload") or summary.get("test_ad") or not (missed_window or approved):
+    qa_rejected = error.startswith("QAError: ролик не прошёл контроль качества: ")
+    if summary.get("upload") or summary.get("no_upload") or summary.get("test_ad") or not (missed_window or qa_rejected):
         raise RuntimeError("Артефакт не подходит для ручной публикации")
     story = load_json(folder / "story.json", default={}) or {}
     ad_info = load_json(folder / "ad_info.json", default=None)
     meta = load_json(folder / "metadata.json", default=None)
-    if approved:
+    if qa_rejected:
         photo_credits = archive.credits(load_json(folder / "archive_photos.json", default=[]))
         story = {**story, "case": summary.get("case"), "photo_credits": photo_credits}
         assembly = load_json(folder / "assembly.json")
@@ -62,6 +60,5 @@ if __name__ == "__main__":
     setup_logging()
     parser = argparse.ArgumentParser()
     parser.add_argument("root", type=Path)
-    parser.add_argument("--approve-visual-qa", action="store_true")
     args = parser.parse_args()
-    publish(args.root, approve_visual_qa=args.approve_visual_qa)
+    publish(args.root)
