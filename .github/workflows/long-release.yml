@@ -1,4 +1,4 @@
-name: Upload rendered evening Short for review
+name: Upload rendered morning Short for review
 on:
   workflow_dispatch:
 
@@ -7,7 +7,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: short-review-45859613054
+  group: short-review-45969878090
   cancel-in-progress: false
 
 jobs:
@@ -21,8 +21,8 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
-          run-id: 45859613054
-          name: short-184
+          run-id: 45969878090
+          name: short-186
           path: rendered
       - uses: actions/setup-python@v6
         with:
@@ -43,7 +43,7 @@ jobs:
 
           setup_logging()
           (video,) = Path("rendered").rglob("final.mp4")
-          assert video.parent.name == "20261126_163430"
+          assert video.parent.name == "20261127_090103"
           summary = load_json(video.with_name("summary.json"))
           story = load_json(video.with_name("story.json"))
           story["case"] = summary.get("case")
