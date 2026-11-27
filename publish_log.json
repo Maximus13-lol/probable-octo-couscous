@@ -821,5 +821,25 @@
     "manual": true,
     "publish_at": null,
     "slot_date": "2026-11-27"
+  },
+  {
+    "date": "2026-11-27",
+    "run_id": "20261127_195525",
+    "video_id": "eGlWyzA2tFg",
+    "url": "https://youtube.com/shorts/eGlWyzA2tFg",
+    "title": "28 ноября: Что скрывал первый сигнал из космоса? #Shorts",
+    "topic": "Открытие первого в мире пульсара — космического радиомаяка",
+    "source": "onthisday",
+    "privacy": "private",
+    "ad_campaign": null,
+    "slot": "08:00-09:30",
+    "cta_voice": null,
+    "thumbnail": "ok",
+    "rubric": "ЭТОТ ДЕНЬ · 28 НОЯБРЯ",
+    "case": null,
+    "question": "Как вы думаете, смогли бы мы расшизнать сигнал внеземной цивилизации сегодня?",
+    "manual": false,
+    "publish_at": "2026-11-28T05:05:00Z",
+    "slot_date": "2026-11-28"
   }
 ]
