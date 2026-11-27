@@ -801,5 +801,25 @@
     "manual": false,
     "publish_at": "2026-11-26T05:55:00Z",
     "slot_date": "2026-11-26"
+  },
+  {
+    "date": "2026-11-27",
+    "run_id": "20261127_165623",
+    "video_id": "g6Q-A7XPjOI",
+    "url": "https://youtube.com/shorts/g6Q-A7XPjOI",
+    "title": "Дело №10: Загадка согнутых мечей из Польши #Shorts",
+    "topic": "Загадочные двухтысячелетние согнутые мечи и лунницы из Польши",
+    "source": "manual",
+    "privacy": "public",
+    "ad_campaign": null,
+    "slot": null,
+    "cta_voice": null,
+    "thumbnail": "ok",
+    "rubric": "ТРИ ВЕРСИИ",
+    "case": 10,
+    "question": "Как вы думаете, какой бог получил этот щедрый дар?",
+    "manual": true,
+    "publish_at": null,
+    "slot_date": "2026-11-27"
   }
 ]
