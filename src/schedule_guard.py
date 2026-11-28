@@ -2,7 +2,7 @@
 
 Слоты (время выхода по МСК) — config/schedule.json.
 Сборка стартует за lead_minutes до слота; ролик загружается с отложенной публикацией (YouTube publishAt)
-и выходит ровно в слот. Публикация возможна до окончания окна.
+и выходит в слот. Пропущенные слоты повторяются до публикации.
 
 Заполненные слоты определяются по publish_log.json (поле slot).
 Пишет в $GITHUB_OUTPUT: run, slot, slot_date, publish_at, deadline.
@@ -51,19 +51,17 @@ def slot_dt(day: dt.date, hhmm: str, tz: ZoneInfo) -> dt.datetime:
     return dt.datetime(day.year, day.month, day.day, h, m, tzinfo=tz)
 
 
-def _today_entries(day: dt.date) -> list[dict]:
-    return [e for e in (load_json(PUBLISH_LOG_FILE, default=[]) or [])
-            if (e.get("slot_date") or e.get("date")) == day.isoformat()]
-
-
 def _is_manual(e: dict) -> bool:
     """Внеплановый ролик (ручной запуск): у новых записей есть slot_date, но нет slot. Слоты не занимает."""
     return bool(e.get("manual")) or ("slot_date" in e and not e.get("slot"))
 
 
-def filled_slots(day: dt.date, slots: list[str]) -> set[str]:
+def filled_slots(day: dt.date, slots: list[str], entries: list[dict] | None = None) -> set[str]:
     """Слоты, уже занятые сегодня. Старые записи (до поля slot_date) без slot занимают самые ранние слоты."""
-    entries = [e for e in _today_entries(day) if not _is_manual(e)]
+    if entries is None:
+        entries = load_json(PUBLISH_LOG_FILE, default=[]) or []
+    entries = [e for e in entries if (e.get("slot_date") or e.get("date")) == day.isoformat()
+               and not _is_manual(e)]
     filled = {e["slot"] for e in entries if e.get("slot") in slots}
     legacy = sum(1 for e in entries if not e.get("slot"))
     for s in slots:
@@ -86,18 +84,29 @@ def decide(now: dt.datetime | None = None) -> dict:
     tz = ZoneInfo(c["timezone"])
     now = (now or dt.datetime.now(dt.timezone.utc)).astimezone(tz)
     day = now.date()
-    slots = slots_for(day, c)
     lead = dt.timedelta(minutes=int(c["lead_minutes"]))
-    due = [s for s in slots if slot_dt(day, s, tz) - lead <= now < window_end(day, s, tz)]
-    filled = filled_slots(day, slots)
+    entries = load_json(PUBLISH_LOG_FILE, default=[]) or []
+    retry_from = dt.date.fromisoformat(c["retry_from"]) if c.get("retry_from") else None
+    candidate = min(day, retry_from) if retry_from else day
+    target = None
+    while candidate <= day:
+        slots = slots_for(candidate, c)
+        retry_enabled = retry_from is not None and candidate >= retry_from
+        due = [s for s in slots if slot_dt(candidate, s, tz) - lead <= now
+               and (retry_enabled or now < window_end(candidate, s, tz))]
+        filled = filled_slots(candidate, slots, entries)
+        target = next((s for s in due if s not in filled), None)
+        if target is not None:
+            day = candidate
+            break
+        candidate += dt.timedelta(days=1)
     info = {"run": False, "slot": "", "slot_date": "", "publish_at": "", "deadline": "",
             "now": now.isoformat(), "slots": slots, "due": due, "filled": sorted(filled)}
-    target = next((s for s in due if s not in filled), None)
     if target is None and now.hour >= 20:
         # По возможности готовим завтрашние публикации заранее.
         day += dt.timedelta(days=1)
         slots = slots_for(day, c)
-        filled = filled_slots(day, slots)
+        filled = filled_slots(day, slots, entries)
         target = next((s for s in slots if s not in filled), None)
         info.update(slots=slots, due=slots, filled=sorted(filled))
     if target is None and not due:

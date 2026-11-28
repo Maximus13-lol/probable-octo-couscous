@@ -189,9 +189,9 @@ def upload(video: Path, meta: dict, run_dir: Path) -> dict:
         "upload_status": response.get("status", {}).get("uploadStatus"),
         "paid_promotion_flag": bool(response.get("paidProductPlacementDetails", {}).get("hasPaidProductPlacement")),
     }
+    result["publish_at"] = response.get("status", {}).get("publishAt") or meta.get("publish_at")
     save_json(run_dir / "upload_result.json", result)
     log.info("Опубликовано: %s (%s)", result["url"], result["privacy"])
-    result["publish_at"] = response.get("status", {}).get("publishAt") or meta.get("publish_at")
     if meta.get("publish_at"):
         log.info("Ролик запланирован: станет публичным в %s (UTC)", result["publish_at"])
     elif result["privacy"] != meta["privacy_status"]:
